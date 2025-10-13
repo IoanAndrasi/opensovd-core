@@ -1,0 +1,24 @@
+# SPDX-FileCopyrightText: 2025 The Contributors to Eclipse OpenSOVD (see CONTRIBUTORS)
+#
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "sovd-handlers"
+version = "0.1.0"
+edition.workspace = true
+publish = false
+description = "SOVD handlers"
+homepage.workspace = true
+license.workspace = true
+
+[dependencies]
+hyper = { workspace = true }
+lazy_static = "1.5.0"
+log = { workspace = true }
+openapi_client = { workspace = true }
+openssl = { workspace = true }
+procfs = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sysinfo = "0.30.8"
+tokio = { workspace = true }
