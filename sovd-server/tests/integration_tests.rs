@@ -1,10 +1,10 @@
-use sovd_server::sovd_server::spawn_test_server;
-use sovd_server::server_config::ServerConfig;
-use std::sync::Mutex;
 use once_cell::sync::Lazy;
-use std::time::Duration;
 use reqwest::Client;
 use sovd_handlers::get_process_pid;
+use sovd_server::server_config::ServerConfig;
+use sovd_server::sovd_server::spawn_test_server;
+use std::sync::Mutex;
+use std::time::Duration;
 
 static SERVER_CONFIG: Lazy<ServerConfig> = Lazy::new(|| {
     ServerConfig::create_server_settings(
@@ -14,7 +14,8 @@ static SERVER_CONFIG: Lazy<ServerConfig> = Lazy::new(|| {
         "0".to_string(),
         "standalone".to_string(),
         "chassis-hpc".to_string(),
-    ).expect("Failed to create server config")
+    )
+    .expect("Failed to create server config")
 });
 
 static SERVER_ADDR: Lazy<Mutex<Option<String>>> = Lazy::new(|| Mutex::new(None));
@@ -35,15 +36,20 @@ async fn start_server() {
 }
 
 fn get_server_addr() -> String {
-    SERVER_ADDR.lock().unwrap().clone().expect("Server address not set")
+    SERVER_ADDR
+        .lock()
+        .unwrap()
+        .clone()
+        .expect("Server address not set")
 }
-
 
 fn build_app_path_resources(resource: &str) -> String {
     let pid = get_process_pid("sovd-server").expect("Fail to read pid");
-    format!("v1/apps/sovd-server-{}/data/sovd-server-{}-{}", pid, pid, resource)
+    format!(
+        "v1/apps/sovd-server-{}/data/sovd-server-{}-{}",
+        pid, pid, resource
+    )
 }
-
 
 async fn get_and_assert_endpoint(path: &str) {
     start_server().await;
@@ -98,13 +104,19 @@ async fn get_related_apps() {
 
 #[tokio::test]
 async fn get_specific_app() {
-    let path = format!("v1/apps/sovd-server-{}", get_process_pid("sovd-server").expect("Fail to read pid"));
+    let path = format!(
+        "v1/apps/sovd-server-{}",
+        get_process_pid("sovd-server").expect("Fail to read pid")
+    );
     get_and_assert_endpoint(&path).await;
 }
 
 #[tokio::test]
 async fn get_specific_app_data() {
-    let path = format!("v1/apps/sovd-server-{}/data", get_process_pid("sovd-server").expect("Fail to read pid"));
+    let path = format!(
+        "v1/apps/sovd-server-{}/data",
+        get_process_pid("sovd-server").expect("Fail to read pid")
+    );
     get_and_assert_endpoint(&path).await;
 }
 
