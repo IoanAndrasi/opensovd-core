@@ -117,8 +117,8 @@ pub fn find_and_create_read_value(
 
     // Search for identifier or name in the JSON array
     for element in json_array {
-        if search_identifier.map_or(true, |id| element.identifier == id)
-            && search_name.map_or(true, |name| element.name == name)
+        if search_identifier.is_none_or(|id| element.identifier == id)
+            && search_name.is_none_or(|name| element.name == name)
         {
             // Convert the found element into a EntityCollectionEntityIdDataDataIdGet200Response object
             let mut collect_data: Map<String, JsonValue> = Map::new();
@@ -247,10 +247,10 @@ pub fn find_by_name(
 }
 
 pub fn create_entity_collection_response(
-    json_data: &Vec<JsonValue>,
+    json_data: &[JsonValue],
 ) -> Result<
     EntityCollectionEntityIdDataGroupsGetResponse,
-    EntityCollectionEntityIdDataDataIdGet200ResponseErrorsInnerError,
+    Box<EntityCollectionEntityIdDataDataIdGet200ResponseErrorsInnerError>,
 > {
     // Process the JSON elements
     let items: Vec<EntityCollectionEntityIdDataGroupsGet200ResponseItemsInner> = json_data
@@ -286,7 +286,7 @@ pub fn group_by_writability(
     json_data: &Vec<JsonValue>,
 ) -> Result<
     EntityCollectionEntityIdDataGroupsGetResponse,
-    EntityCollectionEntityIdDataDataIdGet200ResponseErrorsInnerError,
+    Box<EntityCollectionEntityIdDataDataIdGet200ResponseErrorsInnerError>,
 > {
     // Group the JSON elements by isWritable
     let mut grouped_data: HashMap<
@@ -325,10 +325,10 @@ pub fn group_by_writability(
 }
 
 pub fn prepare_data_response(
-    json_data: &Vec<JsonValue>,
+    json_data: &[JsonValue],
 ) -> Result<
     EntityCollectionEntityIdDataGetResponse,
-    EntityCollectionEntityIdDataDataIdGet200ResponseErrorsInnerError,
+    Box<EntityCollectionEntityIdDataDataIdGet200ResponseErrorsInnerError>,
 > {
     // Filter the JSON elements based on isWritable
     let writable_elements: Vec<_> = json_data
@@ -364,7 +364,7 @@ fn create_group(
     group_id: String,
 ) -> Result<
     Vec<EntityCollectionEntityIdDataGet200ResponseItemsInner>,
-    EntityCollectionEntityIdDataDataIdGet200ResponseErrorsInnerError,
+    Box<EntityCollectionEntityIdDataDataIdGet200ResponseErrorsInnerError>,
 > {
     Ok(elements
         .into_iter()
@@ -536,8 +536,7 @@ pub fn find_entity_by_name(
             } else {
                 name
             };
-            let processed_name = name.replace(" ", "-");
-            processed_name
+            name.replace(" ", "-")
         } else {
             "".to_string()
         };
@@ -675,14 +674,12 @@ pub fn get_disk_usage_for_pid(pid: i32) -> Option<u64> {
     info!("get_disk_usage_for_pid with {}", pid);
     if let Ok(entries) = fs::read_dir(proc_fd_path) {
         for entry in entries {
-            if let Ok(entry) = entry {
-                if let Ok(metadata) = entry.metadata() {
+            if let Ok(entry) = entry && let Ok(metadata) = entry.metadata() {
                     // Nur reguläre Dateien berücksichtigen
                     if metadata.is_file() {
                         disk_usage += metadata.len();
                     }
                 }
-            }
         }
         info!("get_disk_usage_for_pid {}", disk_usage);
         Some(disk_usage)
@@ -724,11 +721,7 @@ pub fn get_memory_usage(pid: &str) -> Option<u64> {
     let s = System::new_all();
 
     if let Ok(pid_int) = pid.parse::<u32>() {
-        if let Some(process) = s.process(Pid::from_u32(pid_int)) {
-            Some(process.memory() / 1000)
-        } else {
-            None
-        }
+        s.process(Pid::from_u32(pid_int)).map(|process| process.memory() / 1000)
     } else {
         None
     }
@@ -844,8 +837,8 @@ pub fn handle_app_resource(
             if let Some(disk_io) = get_executable_size(pid_to_monitor.parse::<u32>().unwrap()) {
                 info!("disk {}", disk_io);
                 let disks = Disks::new_with_refreshed_list();
-                let disk_space_available = disks.get(0).unwrap().available_space();
-                let total_disk_space = disks.get(0).unwrap().total_space();
+                let disk_space_available = disks.first().unwrap().available_space();
+                let total_disk_space = disks.first().unwrap().total_space();
                 let mut response_data = BTreeMap::new();
                 response_data.insert(
                     "description".to_string(),
@@ -893,8 +886,8 @@ pub fn handle_app_resource(
             if let Some(disk_io) = get_executable_size(pid_to_monitor.parse::<u32>().unwrap()) {
                 let mut disk_data = Map::new();
                 let disks = Disks::new_with_refreshed_list();
-                let disk_space_available = disks.get(0).unwrap().available_space();
-                let total_disk_space = disks.get(0).unwrap().total_space();
+                let disk_space_available = disks.first().unwrap().available_space();
+                let total_disk_space = disks.first().unwrap().total_space();
                 disk_data.insert(
                     "description".to_string(),
                     JsonValue::String(format!("Disk usage {}", entity)),
@@ -1023,7 +1016,7 @@ pub fn get_system_disk_io() -> Vec<(String, i32, u64, u64)> {
     let mut result = Vec::new();
     let s = System::new_all();
 
-    for (_pid, process) in s.processes() {
+    for process in s.processes().values() {
         let disk_usage = process.disk_usage();
         let name = process.name().to_string();
         let pid_value = process.pid().to_string().parse::<i32>().unwrap();
@@ -1069,7 +1062,7 @@ pub fn handle_cpu_resource(id: &str) -> EntityCollectionEntityIdDataDataIdGetRes
             "description".to_string(),
             JsonValue::String(format!(
                 "CPU usage for component {}",
-                get_first_part_after_dash(&id)
+                get_first_part_after_dash(id)
             )),
         );
         response_data.insert("name".to_string(), JsonValue::String("CPU".to_string()));
@@ -1125,8 +1118,8 @@ fn handle_memory_resource(id: &str) -> EntityCollectionEntityIdDataDataIdGetResp
 pub fn handle_disk_resource(id: &str) -> EntityCollectionEntityIdDataDataIdGetResponse {
     let mut resources = Map::new();
     let disks = Disks::new_with_refreshed_list();
-    let disk_space_available = disks.get(0).unwrap().available_space();
-    let total_disk_space = disks.get(0).unwrap().total_space();
+    let disk_space_available = disks.first().unwrap().available_space();
+    let total_disk_space = disks.first().unwrap().total_space();
 
     resources.insert(
         ("disk_space_available_bytes").into(),
@@ -1202,7 +1195,7 @@ fn handle_all_system_resources(
             "description".to_string(),
             JsonValue::String(format!(
                 "CPU usage for component {}",
-                get_first_part_after_dash(&id)
+                get_first_part_after_dash(id)
             )),
         );
         cpu_usage_data.insert("name".to_string(), JsonValue::String("CPU".to_string()));
@@ -1219,7 +1212,7 @@ fn handle_all_system_resources(
             "description".to_string(),
             JsonValue::String(format!(
                 "CPU usage for component {}",
-                get_first_part_after_dash(&id)
+                get_first_part_after_dash(id)
             )),
         );
         memory_usage_data.insert("total_memory_mb".to_string(), total_memory_as_json_number);
@@ -1300,9 +1293,10 @@ pub async fn gateway_request(
 }
 
 use std::net::ToSocketAddrs;
+#[allow(clippy::redundant_pattern_matching)]
 pub async fn is_host_available(host: &str, port: u16) -> bool {
     if let Ok(_) = TcpStream::connect_timeout(
-        &(&host[..], port).to_socket_addrs().unwrap().next().unwrap(),
+        &(host, port).to_socket_addrs().unwrap().next().unwrap(),
         Duration::from_secs(5),
     ) {
         info!("Verbindung zu {}:{} erfolgreich.", host, port);
@@ -1319,15 +1313,15 @@ pub fn update_href_with_base_uri(json_value: &mut Value, base_uri: &str) {
         // Iterate over each element in the "items" array
         for item in items_array.iter_mut() {
             // Check if the element is an object and contains the "href" field
-            if let Some(obj) = item.as_object_mut() {
-                if let Some(href_value) = obj.get("href").and_then(|v| v.as_str()) {
-                    // Check if the "href" matches the base URI
-                    if !href_value.starts_with(base_uri) {
-                        // Replace the non-matching part of the URI with the base URI
-                        let updated_href = format!("{}{}", base_uri, href_value);
-                        // Replace the value of the "href" field in the object
-                        obj.insert("href".to_string(), Value::String(updated_href));
-                    }
+            if let Some(obj) = item.as_object_mut()
+                && let Some(href_value) = obj.get("href").and_then(|v| v.as_str())
+            {
+                // Check if the "href" matches the base URI
+                if !href_value.starts_with(base_uri) {
+                    // Replace the non-matching part of the URI with the base URI
+                    let updated_href = format!("{}{}", base_uri, href_value);
+                    // Replace the value of the "href" field in the object
+                    obj.insert("href".to_string(), Value::String(updated_href));
                 }
             }
         }
@@ -1403,20 +1397,18 @@ pub fn extract_response_data_from_json_to_response(
             for (field_name, field_value) in object.iter() {
                 if let Some(field_value_str) = field_value.as_str() {
                     // Format the value using the base URI and the corresponding path
-                    let formatted_value = match field_name.as_str() {
-                        _ => format!(
-                            "{}/apps/{}/{}",
-                            base_uri,
-                            id,
-                            match field_name.as_str() {
-                                "data" => "data",
-                                "configurations" => "configuration",
-                                "bulk_data" => "bulk-data",
-                                // add other fields here
-                                _ => "",
-                            }
-                        ),
-                    };
+                    let formatted_value = format!(
+                        "{}/apps/{}/{}",
+                        base_uri,
+                        id,
+                        match field_name.as_str() {
+                            "data" => "data",
+                            "configurations" => "configuration",
+                            "bulk_data" => "bulk-data",
+                            // add other fields here
+                            _ => "",
+                        }
+                    );
 
                     // Add the field to the response if the value is not empty
                     if !field_value_str.is_empty() {
@@ -1475,8 +1467,9 @@ pub fn extract_response_data_from_json_to_response(
 }
 
 pub fn resolve_hostname(hostname: &str) -> Result<String, std::io::Error> {
-    let addr = (hostname, 0).to_socket_addrs()?.next().ok_or_else(|| {
-        std::io::Error::new(std::io::ErrorKind::Other, "Hostname resolution failed")
-    })?;
+    let addr = (hostname, 0)
+        .to_socket_addrs()?
+        .next()
+        .ok_or_else(|| std::io::Error::other("Hostname resolution failed"))?;
     Ok(addr.ip().to_string())
 }
