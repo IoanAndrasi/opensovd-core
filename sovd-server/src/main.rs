@@ -24,7 +24,7 @@ use server_config::ServerConfig as MainServerConfig;
 use sovd_handlers::resolve_hostname;
 use sovd_server::create;
 
-//This logger use simple log info to output data into tmp folder
+// This logger use simple log info to output data into tmp folder
 fn init_logger() -> Result<(), flexi_logger::FlexiLoggerError> {
     let log_path: PathBuf;
 
@@ -47,9 +47,10 @@ fn init_logger() -> Result<(), flexi_logger::FlexiLoggerError> {
                 .suffix("log"),
         )
         .format_for_files(flexi_logger::detailed_format)
+        .duplicate_to_stdout(flexi_logger::Duplicate::Info)
+        .duplicate_to_stderr(flexi_logger::Duplicate::Error)
         .print_message()
         .start()?;
-
     Ok(())
 }
 
