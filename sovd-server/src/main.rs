@@ -24,20 +24,19 @@ use server_config::ServerConfig as MainServerConfig;
 use sovd_handlers::resolve_hostname;
 use sovd_server::create;
 
-// This logger use simple log info to output data into tmp folder
-fn init_logger() -> Result<(), flexi_logger::FlexiLoggerError> {
-    let log_path: PathBuf;
+//This logger use simple log info to output data into folder
 
-    if cfg!(target_os = "windows") {
-        log_path = env::temp_dir().join("sovd_logs");
-    } else {
-        log_path = PathBuf::from("/var/log/sovd");
-
-        // Try to create the directory if it doesn't exist
-        if !log_path.exists() {
-            fs::create_dir_all(&log_path)?;
+fn init_logger(path: Option<&str>) -> Result<(), flexi_logger::FlexiLoggerError> {
+    let log_path: PathBuf = match path {
+        Some(p) if !p.is_empty() => {
+            let custom_path = PathBuf::from(p);
+            if !custom_path.exists() {
+                fs::create_dir_all(&custom_path)?;
+            }
+            custom_path
         }
-    }
+        _ => env::current_dir()?,
+    };
 
     Logger::try_with_str("info")?
         .log_to_file(
@@ -58,9 +57,6 @@ fn init_logger() -> Result<(), flexi_logger::FlexiLoggerError> {
 /// and pass it to the web server.
 #[tokio::main]
 async fn main() {
-    if let Err(e) = init_logger() {
-        eprintln!("Logger initialization failed: {}", e);
-    }
     let matches = App::new("server")
         .arg(
             Arg::with_name("ip_address")
@@ -83,7 +79,18 @@ async fn main() {
                 .index(3)
                 .help("Hostname"),
         )
+        .arg(
+            Arg::with_name("logs")
+                .required(false)
+                .index(4)
+                .help("Logs location"),
+        )
         .get_matches();
+    let log_path = matches.value_of("logs");
+
+    if let Err(e) = init_logger(log_path) {
+        info!("Logger initialization failed: {}", e);
+    }
 
     let ip_address_name = matches.value_of("ip_address").unwrap().to_string();
     let port = matches.value_of("port").unwrap().to_string();

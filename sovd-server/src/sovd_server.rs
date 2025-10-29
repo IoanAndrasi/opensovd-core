@@ -46,6 +46,7 @@ use hyper::header::{
     ACCESS_CONTROL_ALLOW_HEADERS, ACCESS_CONTROL_ALLOW_METHODS, ACCESS_CONTROL_ALLOW_ORIGIN,
     HeaderValue,
 };
+use hyper::server::conn::AddrIncoming;
 use serde_json::Error as SerdeError;
 use serde_json::Map;
 use serde_json::Value as JsonValue;
@@ -60,6 +61,7 @@ use std::io::Write;
 use std::str::FromStr;
 use std::str::from_utf8;
 use tokio::task;
+use tokio::task::JoinHandle;
 use tokio_openssl::SslStream;
 
 use openapi_client::models;
@@ -236,6 +238,35 @@ pub async fn create(server_config: &ServerConfig, addr: &str) {
 
     info!("Shutting down mDNS server...");
     mdns_wrapper.shutdown();
+}
+
+#[allow(dead_code)]
+pub async fn spawn_test_server(server_config: &ServerConfig) -> (SocketAddr, JoinHandle<()>) {
+    // Bind to port 0 to let OS assign a free port
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("Failed to bind");
+    let addr = listener.local_addr().expect("Failed to get local address");
+    let incoming = AddrIncoming::from_listener(listener).expect("Failed to create AddrIncoming");
+
+    let server = Server::new();
+    let service = MakeService::new(server);
+    let service = MakeAllowAllAuthenticator::new(service, "cosmo");
+
+    if SERVER_CONFIG.get().is_none() {
+        init_server_config(server_config.clone());
+    }
+
+    let service = openapi_client::server::context::MakeAddContext::<_, EmptyContext>::new(service);
+    let server_future = hyper::Server::builder(incoming).serve(service);
+
+    let handle = tokio::spawn(async move {
+        if let Err(e) = server_future.await {
+            error!("Server error {}", e);
+        }
+    });
+
+    (addr, handle)
 }
 
 #[derive(Copy, Clone)]
