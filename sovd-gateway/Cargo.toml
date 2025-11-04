@@ -3,26 +3,23 @@
 # SPDX-License-Identifier: Apache-2.0
 
 [package]
-name = "opensovd-server"
+name = "sovd-gateway"
 version = "0.1.0"
 edition.workspace = true
 publish = false
-description = "Eclipse OpenSOVD Server - A modern, open source Service Oriented Vehicle Diagnostics Server written in Rust"
+description = "Eclipse OpenSOVD Gateway - A modern, open source Service Oriented Vehicle Diagnostics Server written in Rust"
 homepage.workspace = true
 license.workspace = true
 
-[[bin]]
-name = "opensovd-server"
-path = "src/main.rs"
-
 [lib]
-name = "opensovd_server_lib"
+name = "opensovd_gateway_lib"
 path = "src/lib.rs"
 
 [dependencies]
 async-trait = "0.1.89"
 axum = "0.8.6"
 axum-extra = "0.10.3"
+agnostic-mdns = { version = "0.4.2", features = ["tokio"] }
 
 # args
 clap = { workspace = true, features = ["derive"] }
@@ -31,7 +28,6 @@ clap = { workspace = true, features = ["derive"] }
 figment = { workspace = true, features = ["env", "toml"] }
 sovd-api = { workspace = true, features = ["server", "conversion"] }
 sovd-handlers = {workspace = true }
-sovd-gateway = {workspace = true}
 sovd-tracing = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
@@ -49,8 +45,11 @@ tracing-subscriber = { workspace = true, features = [
   "std",
 ] }
 gethostname = "1.1.0"
-reqwest = "0.12.24"
+reqwest = { version = "0.12.24", features = ["json", "stream"] }
 once_cell = "1.21.3"
+lazy_static = "1.5.0"
+futures = "0.3.31"
+mdns-sd = "0.16"
 
 [features]
 default = []

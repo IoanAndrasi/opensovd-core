@@ -14,6 +14,7 @@
 use clap::{Parser, command};
 use opensovd_server_lib::config::configfile::ConfigSanity;
 use opensovd_server_lib::start_server;
+use opensovd_gateway_lib::start_gateway;
 use tracing_subscriber::layer::SubscriberExt;
 
 #[derive(Parser, Debug)]
@@ -93,6 +94,9 @@ async fn main() -> Result<(), String> {
     tracing::info!("Id {}", id);
     tracing::info!("Name {}", name);
 
+    tokio::spawn(async move {
+        start_gateway().await;
+    });
     start_server(addr, id, name).await;
 
     Ok(())

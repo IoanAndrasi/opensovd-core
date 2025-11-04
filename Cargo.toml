@@ -11,12 +11,14 @@ homepage = "https://github.com/eclipse-opensovd/opensovd-core"
 resolver = "3"
 members = [
   "sovd-server",
+  "sovd-gateway",
   "sovd-tracing"
 ]
 
 [workspace.dependencies]
 # ---- opensovd core crates ----
 sovd-api = { path = "target/generated/sovd-api"}
+sovd-gateway = { path = "sovd-gateway" }
 sovd-handlers = { path = "sovd-handlers" }
 sovd-tracing = { path = "sovd-tracing" }
 
