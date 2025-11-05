@@ -17,6 +17,10 @@ use tokio::{net::TcpListener, signal, task::JoinHandle};
 
 use crate::config::configfile::Configuration;
 
+use mdns_sd::{ServiceDaemon, ServiceInfo};
+use std::collections::HashMap;
+
+
 mod apis;
 pub mod config;
 
@@ -27,11 +31,13 @@ struct ServerImpl {
 
 pub async fn start_server(addr: &str, id: &str, name: &str) {
     // Init Axum server instance (the generated server builder wraps our implementation)
-    let id = id.to_owned();
+    let id = id;
     let name = name.to_owned();
-    let app = Arc::new(ServerImpl { id, name });
+    let app = Arc::new(ServerImpl { id: id.to_string().clone(), name });
     let app = server::new(app);
 
+    //start mdns
+    register_sovd_mdns(id, 7690).await;
     // Run the server with graceful shutdown
     let listener = TcpListener::bind(addr).await.unwrap();
     axum::serve(listener, app)
@@ -39,6 +45,35 @@ pub async fn start_server(addr: &str, id: &str, name: &str) {
         .await
         .unwrap();
 }
+
+
+async fn register_sovd_mdns(id: &str, port: u16) {
+    let mdns = ServiceDaemon::new().expect("Failed to create mDNS daemon");
+
+    let service_type = "_sovd._tcp.local.";
+    let instance_name = id;
+    let host_name = format!("{}.local.", id);
+
+    let mut properties = HashMap::new();
+    properties.insert("path".to_string(), "/v1".to_string());
+    properties.insert("version".to_string(), "1.0".to_string());
+
+    let service_info = ServiceInfo::new(
+        service_type,
+        instance_name,
+        &host_name,
+        "", // IP auto-filled
+        port,
+        properties,
+    )
+    .unwrap()
+    .enable_addr_auto();
+
+    mdns.register(service_info).expect("Failed to register mDNS service");
+
+    println!("SOVD server mDNS registered: {} on port {}", instance_name, port);
+}
+
 
 async fn shutdown_signal() {
     let ctrl_c = async {

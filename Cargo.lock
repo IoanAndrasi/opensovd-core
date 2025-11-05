@@ -2257,6 +2257,7 @@ dependencies = [
  "clap",
  "figment",
  "gethostname",
+ "mdns-sd",
  "once_cell",
  "reqwest",
  "serde",
