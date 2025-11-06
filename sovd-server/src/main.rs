@@ -12,9 +12,9 @@
 */
 
 use clap::{Parser, command};
+use opensovd_gateway_lib::start_gateway;
 use opensovd_server_lib::config::configfile::ConfigSanity;
 use opensovd_server_lib::start_server;
-use opensovd_gateway_lib::start_gateway;
 use tracing_subscriber::layer::SubscriberExt;
 
 #[derive(Parser, Debug)]

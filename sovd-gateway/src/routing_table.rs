@@ -1,7 +1,7 @@
+use once_cell::sync::Lazy;
 use std::collections::HashMap;
 use std::net::IpAddr;
 use std::sync::{Arc, RwLock};
-use once_cell::sync::Lazy;
 
 #[derive(Clone, Debug)]
 pub struct UpstreamInfo {
@@ -15,9 +15,8 @@ pub struct UpstreamInfo {
     pub entities: Vec<String>,
 }
 
-pub static ROUTING_TABLE: Lazy<Arc<RwLock<HashMap<String, UpstreamInfo>>>> = Lazy::new(|| {
-    Arc::new(RwLock::new(HashMap::new()))
-});
+pub static ROUTING_TABLE: Lazy<Arc<RwLock<HashMap<String, UpstreamInfo>>>> =
+    Lazy::new(|| Arc::new(RwLock::new(HashMap::new())));
 
 pub fn get_server_info(service: &str) -> Option<UpstreamInfo> {
     ROUTING_TABLE.read().unwrap().get(service).cloned()

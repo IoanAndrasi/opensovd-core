@@ -1,8 +1,8 @@
+use crate::routing_table::{UpstreamInfo, insert_server_info};
 use mdns_sd::{ServiceDaemon, ServiceEvent};
-use crate::routing_table::{insert_server_info, UpstreamInfo};
 use std::net::IpAddr;
 use tokio::sync::watch;
-use tracing::{info, error};
+use tracing::{error, info};
 
 pub async fn start_mdns_listener(mut shutdown_rx: watch::Receiver<()>) {
     info!("Starting mDNS listener...");
@@ -38,7 +38,7 @@ pub async fn start_mdns_listener(mut shutdown_rx: watch::Receiver<()>) {
 
                         let ips: Vec<IpAddr> = info.get_addresses()
                             .iter()
-                            .map(|scoped| scoped.to_ip_addr().clone())
+                            .map(|scoped| scoped.to_ip_addr())
                             .collect();
 
                         info!("Discovered service: {}", instance_name);

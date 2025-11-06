@@ -106,12 +106,12 @@ impl sovd_api::apis::discovery::Discovery for ServerImpl {
                 Ok(EntityCollectionEntityIdGetResponse::Status200_TheResponseBodyContainsAPropertyForEachSupportedResourceAndRelatedCollection(
                     response
                 ))
-            },
+            }
             "apps" => {
                 let tokens = path_params.entity_id.split('-');
 
                 // Check, if last token is a number (is the PID in that case)
-                let last_token = tokens.clone().last().unwrap();
+                let last_token = tokens.clone().next_back().unwrap();
                 let pid = match last_token.parse::<u32>() {
                     Ok(pid) => pid.to_string(),
                     Err(_) => "".to_string(),
@@ -129,9 +129,11 @@ impl sovd_api::apis::discovery::Discovery for ServerImpl {
                     }
                 }
 
-                if let Some(app) = find_single_process(&resource, &pid, &format!("http://{}{}",
-                    host.0,
-                    sovd_api::BASE_PATH)) {
+                if let Some(app) = find_single_process(
+                    &resource,
+                    &pid,
+                    &format!("http://{}{}", host.0, sovd_api::BASE_PATH),
+                ) {
                     let mut response = EntityCollectionEntityIdGet200Response::new(
                         path_params.entity_id.clone(),
                         app.name.clone(),
@@ -152,7 +154,7 @@ impl sovd_api::apis::discovery::Discovery for ServerImpl {
                 }
             }
             "functions" => todo!(),
-            _ => todo!()
+            _ => todo!(),
         }
     }
 
@@ -175,25 +177,28 @@ impl sovd_api::apis::discovery::Discovery for ServerImpl {
                 items.push(models::EntityCollectionGet200ResponseItemsInner::new(
                     self.id.to_owned(),
                     self.name.to_owned(),
-                    String::from(format!(
+                    format!(
                         "http://{}{}/components/{}",
                         host.0,
                         sovd_api::BASE_PATH,
                         self.id
-                    )),
+                    ),
                 ));
 
                 Ok(EntityCollectionGetResponse::Status200_ResponseBody(
                     models::EntityCollectionGet200Response::new(items),
                 ))
-            },
-            "apps" => {
-                Ok(EntityCollectionGetResponse::Status0_AnUnexpectedRequestOccurred(
-                    models::AnyPathDocsGetDefaultResponse::new("-1".to_owned(), "Not implemented yet".to_owned())
-                ))
-            },
+            }
+            "apps" => Ok(
+                EntityCollectionGetResponse::Status0_AnUnexpectedRequestOccurred(
+                    models::AnyPathDocsGetDefaultResponse::new(
+                        "-1".to_owned(),
+                        "Not implemented yet".to_owned(),
+                    ),
+                ),
+            ),
             "functions" => todo!(),
-            _ => todo!()
+            _ => todo!(),
         }
     }
 }

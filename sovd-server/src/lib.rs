@@ -20,7 +20,6 @@ use crate::config::configfile::Configuration;
 use mdns_sd::{ServiceDaemon, ServiceInfo};
 use std::collections::HashMap;
 
-
 mod apis;
 pub mod config;
 
@@ -31,9 +30,11 @@ struct ServerImpl {
 
 pub async fn start_server(addr: &str, id: &str, name: &str) {
     // Init Axum server instance (the generated server builder wraps our implementation)
-    let id = id;
     let name = name.to_owned();
-    let app = Arc::new(ServerImpl { id: id.to_string().clone(), name });
+    let app = Arc::new(ServerImpl {
+        id: id.to_string().clone(),
+        name,
+    });
     let app = server::new(app);
 
     //start mdns
@@ -45,7 +46,6 @@ pub async fn start_server(addr: &str, id: &str, name: &str) {
         .await
         .unwrap();
 }
-
 
 async fn register_sovd_mdns(id: &str, port: u16) {
     let mdns = ServiceDaemon::new().expect("Failed to create mDNS daemon");
@@ -69,11 +69,14 @@ async fn register_sovd_mdns(id: &str, port: u16) {
     .unwrap()
     .enable_addr_auto();
 
-    mdns.register(service_info).expect("Failed to register mDNS service");
+    mdns.register(service_info)
+        .expect("Failed to register mDNS service");
 
-    println!("SOVD server mDNS registered: {} on port {}", instance_name, port);
+    println!(
+        "SOVD server mDNS registered: {} on port {}",
+        instance_name, port
+    );
 }
-
 
 async fn shutdown_signal() {
     let ctrl_c = async {
@@ -103,7 +106,7 @@ pub async fn spawn_test_server(config: &Configuration) -> (SocketAddr, JoinHandl
     // Init Axum server instance (the generated server builder wraps our implementation)
     let id = config.server.node_id.to_owned();
     let name = config.server.node_name.to_owned();
-    let app = Arc::new(ServerImpl { id: id, name: name });
+    let app = Arc::new(ServerImpl { id, name });
     let app = server::new(app);
 
     // Bind to port 0 to let OS assign a free port
@@ -112,9 +115,8 @@ pub async fn spawn_test_server(config: &Configuration) -> (SocketAddr, JoinHandl
         .expect("Failed to bind");
     let addr = listener.local_addr().expect("Failed to get local address");
 
-    let server_future = axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal());
-    
+    let server_future = axum::serve(listener, app).with_graceful_shutdown(shutdown_signal());
+
     let handle = tokio::spawn(async move {
         if let Err(e) = server_future.await {
             tracing::error!("Server error {}", e);

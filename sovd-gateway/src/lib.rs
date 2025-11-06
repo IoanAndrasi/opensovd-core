@@ -2,10 +2,9 @@ use tokio::net::TcpListener;
 use tokio::signal;
 
 pub mod gateway;
+pub mod mdns;
 pub mod reverse_proxy;
 pub mod routing_table;
-pub mod mdns;
-
 
 pub async fn start_gateway() {
     // Start mDNS listener in background
@@ -24,16 +23,19 @@ pub async fn start_gateway() {
 
     // Serve the app using Axum's serve function
     axum::serve(listener, app)
-    .with_graceful_shutdown(shutdown_signal(shutdown_tx,mdns_handle))
-    .await
-    .unwrap();
+        .with_graceful_shutdown(shutdown_signal(shutdown_tx, mdns_handle))
+        .await
+        .unwrap();
 }
 
-
-async fn shutdown_signal(sender: tokio::sync::watch::Sender<()>, handle: tokio::task::JoinHandle<()>) {
-    signal::ctrl_c().await.expect("Failed to listen for shutdown signal");
+async fn shutdown_signal(
+    sender: tokio::sync::watch::Sender<()>,
+    handle: tokio::task::JoinHandle<()>,
+) {
+    signal::ctrl_c()
+        .await
+        .expect("Failed to listen for shutdown signal");
     tracing::info!("Shutdown signal received. Stopping gateway...");
     let _ = sender.send(());
     let _ = handle.await;
-    
 }

@@ -1,15 +1,13 @@
 use once_cell::sync::Lazy;
-use reqwest::Client;
-use sovd_handlers::get_process_pid;
 use opensovd_server_lib::config::configfile::Configuration;
 use opensovd_server_lib::spawn_test_server;
+use reqwest::Client;
+use sovd_handlers::get_process_pid;
 use std::sync::Mutex;
 use std::time::Duration;
 
 // Static configuration for the test server using Lazy initialization
-static SERVER_CONFIG: Lazy<Configuration> = Lazy::new(|| {
-    Configuration::default()
-});
+static SERVER_CONFIG: Lazy<Configuration> = Lazy::new(|| Configuration::default());
 
 // Static variable to store the server address once started
 static SERVER_ADDR: Lazy<Mutex<Option<String>>> = Lazy::new(|| Mutex::new(None));

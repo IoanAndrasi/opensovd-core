@@ -1,11 +1,11 @@
+use crate::reverse_proxy::forward_dynamic_request;
 use axum::{
+    Router,
     extract::{Path, Request},
     http::StatusCode,
     response::IntoResponse,
     routing::any,
-    Router,
 };
-use crate::reverse_proxy::forward_dynamic_request;
 use tracing::info;
 
 pub fn build_router() -> Router {
@@ -18,15 +18,15 @@ async fn handle_dynamic(Path(path): Path<String>, req: Request) -> impl IntoResp
 
     match forward_dynamic_request(path.clone(), req).await {
         Ok(resp) => {
-            info!("Successfully forwarded request to upstream for path: {}", path);
+            info!(
+                "Successfully forwarded request to upstream for path: {}",
+                path
+            );
             resp
-        },
+        }
         Err(e) => {
             info!("Error forwarding request for path '{}': {}", path, e);
-            (
-                StatusCode::BAD_GATEWAY,
-                format!("Forwarding error: {}", e)
-            ).into_response()
-        },
+            (StatusCode::BAD_GATEWAY, format!("Forwarding error: {}", e)).into_response()
+        }
     }
 }
