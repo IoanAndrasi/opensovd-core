@@ -71,6 +71,7 @@ function generate_code() {
         -i "${SPEC_FILE}" \
         -g rust-axum \
         -o "${OUT_DIR}" \
+        --skip-validate-spec \
         --additional-properties=packageName=sovd-api
 
     echo "Generated Rust code at ${OUT_DIR}"
