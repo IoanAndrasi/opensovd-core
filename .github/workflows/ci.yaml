@@ -126,6 +126,11 @@ jobs:
           name: opensovd-gateway-${{ matrix.target }}
           path: target/${{ matrix.target }}/${{ matrix.profile }}/opensovd-gateway${{ runner.os == 'Windows' && '.exe' || '' }}
 
+      - uses: actions/upload-artifact@v7
+        with:
+          name: opensovd-mcp-${{ matrix.target }}
+          path: target/${{ matrix.target }}/${{ matrix.profile }}/opensovd-mcp${{ runner.os == 'Windows' && '.exe' || '' }}
+
   licenses:
     needs: prepare
     if: needs.prepare.outputs.should_run == 'true'
@@ -283,93 +288,30 @@ jobs:
     permissions:
       contents: read
       packages: write
+      attestations: write
+      id-token: write
     env:
       DOCKER_BUILD_SUMMARY: false
       DOCKER_BUILD_RECORD_UPLOAD: false
+    strategy:
+      fail-fast: false
+      matrix:
+        image:
+          - {binary: opensovd-gateway, dockerfile: docker/Dockerfile.gateway, smoke: 'uv run pytest tests/test_version.py --opensovd-docker opensovd-gateway:test'}
+          - {binary: opensovd-mcp, dockerfile: docker/Dockerfile.mcp, smoke: ''}
     steps:
       - uses: actions/checkout@v6
       - uses: actions/download-artifact@v8
         with:
-          path: target/release-small
-
-      - name: Prepare Docker build
-        id: prepare
-        run: |
-          PLATFORMS=""
-          if [ -d "target/release-small/opensovd-gateway-x86_64-unknown-linux-gnu" ]; then
-            ln -s opensovd-gateway-x86_64-unknown-linux-gnu target/release-small/amd64
-            chmod +x target/release-small/amd64/opensovd-gateway
-            PLATFORMS="linux/amd64"
-          fi
-          if [ -d "target/release-small/opensovd-gateway-aarch64-unknown-linux-gnu" ]; then
-            ln -s opensovd-gateway-aarch64-unknown-linux-gnu target/release-small/arm64
-            chmod +x target/release-small/arm64/opensovd-gateway
-            [ -n "$PLATFORMS" ] && PLATFORMS="$PLATFORMS,"
-            PLATFORMS="${PLATFORMS}linux/arm64"
-          fi
-          echo "platforms=$PLATFORMS" >> $GITHUB_OUTPUT
-
-      - uses: docker/setup-qemu-action@v4
-      - uses: docker/setup-buildx-action@v4
-      - uses: docker/login-action@v4
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Extract metadata from Cargo.toml
-        id: cargo
-        run: |
-          PKG=$(cargo metadata --format-version 1 --no-deps | jq '.packages[] | select(.name == "opensovd-gateway")')
-          echo "version=$(echo "$PKG" | jq -r '.version')" >> $GITHUB_OUTPUT
-          echo "description=$(echo "$PKG" | jq -r '.description')" >> $GITHUB_OUTPUT
-          echo "license=$(echo "$PKG" | jq -r '.license')" >> $GITHUB_OUTPUT
-          echo "repository=$(echo "$PKG" | jq -r '.repository')" >> $GITHUB_OUTPUT
-
-      - id: meta
-        uses: docker/metadata-action@v6
-        with:
-          images: ghcr.io/${{ github.repository_owner }}/opensovd-gateway
-          tags: |
-            type=raw,value=${{ needs.prepare.outputs.release }}
-            type=raw,value=nightly-{{date 'YYYY-MM-DD'}},enable=${{ needs.prepare.outputs.release == 'nightly' }}
-            type=raw,value=latest,enable=${{ needs.prepare.outputs.release == 'latest' || startsWith(needs.prepare.outputs.release, 'v') }}
-          labels: |
-            org.opencontainers.image.title=opensovd-gateway
-            org.opencontainers.image.description=${{ steps.cargo.outputs.description }}
-            org.opencontainers.image.version=${{ steps.cargo.outputs.version }}
-            org.opencontainers.image.licenses=${{ steps.cargo.outputs.license }}
-            org.opencontainers.image.source=${{ steps.cargo.outputs.repository }}
-
-      - uses: docker/build-push-action@v7
-        with:
-          context: .
-          file: docker/Dockerfile
-          load: true
-          tags: opensovd-gateway:test
-          labels: ${{ steps.meta.outputs.labels }}
-          build-args: TARGETARCH=amd64
-          cache-from: |
-            type=gha,scope=opensovd-core-${{ github.ref_name }}
-            type=gha,scope=opensovd-core-main
-          cache-to: type=gha,mode=max,scope=opensovd-core-${{ github.ref_name }}
-
+          path: dist
+          pattern: ${{ matrix.image.binary }}-*
       - uses: astral-sh/setup-uv@v7
-      - name: Test Docker image
-        run: uv run pytest tests/test_version.py --opensovd-docker opensovd-gateway:test
-
-      - uses: docker/build-push-action@v7
+      - uses: ./.github/actions/docker-publish
         with:
-          context: .
-          file: docker/Dockerfile
-          push: true
-          platforms: ${{ steps.prepare.outputs.platforms }}
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          annotations: ${{ steps.meta.outputs.annotations }}
-          cache-from: |
-            type=gha,scope=opensovd-core-${{ github.ref_name }}
-            type=gha,scope=opensovd-core-main
+          binary: ${{ matrix.image.binary }}
+          dockerfile: ${{ matrix.image.dockerfile }}
+          release-tag: ${{ needs.prepare.outputs.release }}
+          smoke-test-cmd: ${{ matrix.image.smoke }}
 
   release:
     needs: [prepare, build]
@@ -399,14 +341,17 @@ jobs:
             git cliff --current -o CHANGELOG.md
           fi
           mkdir -p artifacts/release
-          for dir in artifacts/opensovd-gateway-*; do
-            target=$(basename "$dir" | sed 's/opensovd-gateway-//')
-            if [[ "$target" == *windows* ]]; then
-              zip "artifacts/release/opensovd-gateway-${VERSION}-${target}.zip" "$dir/opensovd-gateway.exe"
-            else
-              chmod +x "$dir/opensovd-gateway"
-              tar -czf "artifacts/release/opensovd-gateway-${VERSION}-${target}.tar.gz" -C "$dir" opensovd-gateway
-            fi
+          for binary in opensovd-gateway opensovd-mcp; do
+            for dir in artifacts/"${binary}-"*; do
+              [ -d "$dir" ] || continue
+              target=$(basename "$dir" | sed "s/${binary}-//")
+              if [[ "$target" == *windows* ]]; then
+                zip "artifacts/release/${binary}-${VERSION}-${target}.zip" "$dir/${binary}.exe"
+              else
+                chmod +x "$dir/${binary}"
+                tar -czf "artifacts/release/${binary}-${VERSION}-${target}.tar.gz" -C "$dir" "${binary}"
+              fi
+            done
           done
           cd artifacts/release
           for file in *.tar.gz *.zip; do
