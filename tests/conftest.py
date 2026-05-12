@@ -3,15 +3,11 @@
 
 """Pytest configuration and fixtures for end2end tests."""
 
-import shlex
+import re
 from pathlib import Path
 
 import pytest
-from fixtures import Gateway, default_gateway_args, spawn_gateway
-
-# Re-export for other modules
-__all__ = ["Gateway", "default_gateway_args", "spawn_gateway"]
-
+from fixtures import default_binary_args
 
 # --- Session metadata (shown in HTML report header) ---
 
@@ -23,6 +19,10 @@ def pytest_configure(config):
     """Store config for later access in other hooks."""
     global _config
     _config = config
+    if config.getoption("--opensovd-run"):
+        for flag in ("--opensovd-profile", "--opensovd-target", "--opensovd-features"):
+            if config.getoption(flag):
+                raise pytest.UsageError(f"{flag} has no effect when --opensovd-run is set")
 
 
 @pytest.hookimpl(optionalhook=True)
@@ -38,11 +38,10 @@ def pytest_html_results_summary(prefix, summary, postfix):
         return
     try:
         from pytest_metadata.plugin import metadata_key
-
-        metadata = _config.stash.get(metadata_key, {})
-    except Exception:
+    except ImportError:
         return
 
+    metadata = _config.stash.get(metadata_key, {})
     for key, url in list(metadata.items()):
         if key.endswith("_URL") and url:
             label = key.replace("_URL", "").replace("_", " ")
@@ -85,18 +84,24 @@ def pytest_sessionfinish(session, exitstatus):
 
 def pytest_addoption(parser):
     parser.addoption(
-        "--opensovd-binary", default=None, help="Path to pre-built opensovd-gateway binary"
-    )
-    parser.addoption(
-        "--opensovd-docker", default=None, help="Docker image:tag to run instead of local binary"
+        "--opensovd-run",
+        default=None,
+        help="Command prefix to run instead of building from source; test args are appended",
     )
     parser.addoption(
         "--opensovd-args",
         default="",
-        help="Additional arguments to pass to the gateway",
+        help="Additional arguments to pass to the binary",
     )
     parser.addoption(
-        "--opensovd-release", action="store_true", default=False, help="Build in release mode"
+        "--opensovd-profile",
+        default=None,
+        help="Cargo profile to build (default: dev; e.g. release, release-small)",
+    )
+    parser.addoption(
+        "--opensovd-target",
+        default=None,
+        help="Cargo --target triple; needed when artifacts live under target/<triple>/...",
     )
     parser.addoption(
         "--opensovd-features", default="", help="Cargo features to enable (comma-separated)"
@@ -104,57 +109,27 @@ def pytest_addoption(parser):
 
 
 @pytest.fixture(scope="module")
-def gateway_args(request) -> list[str]:
-    args = shlex.split(request.config.getoption("--opensovd-args"))
-    return args or default_gateway_args(request.config)
+def crate_bin() -> str:
+    """Cargo crate bin to build and run.
 
-
-@pytest.fixture(scope="module")
-def gateway_banner() -> str:
-    """Pattern to wait for before considering the gateway ready.
-
-    Override this fixture to wait for different output patterns,
-    e.g., for CLI tests that don't start a server.
+    Override per test module/directory to target a different crate
+    (e.g. opensovd-mcp). The default is the gateway.
     """
-    return "Listening addr="
+    return "opensovd-gateway"
 
 
 @pytest.fixture(scope="module")
-def gateway_extra_features() -> list[str]:
-    """Extra cargo features to compile into the gateway binary.
-
-    Override in test modules that require optional features (e.g. ["tls"]).
-    """
-    return []
+def binary_args(request) -> list[str]:
+    return default_binary_args(request.config)
 
 
 @pytest.fixture(scope="module")
-def gateway_ssl_context():
-    """SSL context for the gateway's httpx client.
+def ready_banner() -> re.Pattern | None:
+    """Pattern to wait for in stdout before treating the process as ready.
 
-    Override in TLS/mTLS test modules to return an ssl.SSLContext configured
-    with the appropriate CA and (for mTLS) client certificate.
+    Default is None (no banner). Crate-specific conftests override.
     """
     return None
-
-
-@pytest.fixture(scope="module")
-def gateway(request, gateway_args, gateway_banner, gateway_extra_features, gateway_ssl_context):
-    gw = spawn_gateway(
-        request.config,
-        gateway_args,
-        gateway_banner,
-        extra_features=gateway_extra_features or None,
-        ssl_context=gateway_ssl_context,
-    )
-
-    # Store URL for Bruno tests to access
-    if gw.base_url:
-        request.config._gateway_base_url = gw.base_url
-
-    yield gw
-
-    gw.close()
 
 
 @pytest.hookimpl(tryfirst=True, hookwrapper=True)
@@ -166,9 +141,12 @@ def pytest_runtest_makereport(item, call):
     markers = list(item.iter_markers(name="req"))
     report.req = [arg for m in markers for arg in m.args]
 
-    # Capture gateway output on failure
+    # Capture process output on failure
     if report.failed and hasattr(item, "funcargs"):
-        gateway = item.funcargs.get("gateway")
-        if gateway and gateway.has_output and not gateway._output_printed:
-            gateway._output_printed = True
-            report.sections.append(("Gateway Output", gateway.stdout))
+        proc = item.funcargs.get("gateway") or item.funcargs.get("mcp")
+        if proc is None:
+            client = item.funcargs.get("client")
+            proc = client.gateway if client is not None else None
+        if proc and proc.has_output and not proc._output_printed:
+            proc._output_printed = True
+            report.sections.append(("Process Output", proc.stdout))
