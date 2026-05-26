@@ -45,6 +45,10 @@ rust_binary(
     name = "auth_example",
     srcs = ["auth/auth.rs"],
     aliases = aliases(normal = True, proc_macro = True),
+    compile_data = [
+        "auth/sovd_authz.rego",
+        "auth/sovd_data.json",
+    ],
     crate_features = ["tls"],
     crate_name = "auth",
     crate_root = "auth/auth.rs",
@@ -64,7 +68,9 @@ rust_binary(
     edition = "2024",
     proc_macro_deps = all_crate_deps(proc_macro = True),
     version = "0.1.1",
-    deps = COMMON_DEPS,
+    deps = COMMON_DEPS + [
+        "@crate_index//:rustls",
+    ],
 )
 
 filegroup(
