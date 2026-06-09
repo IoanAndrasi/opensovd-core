@@ -1097,6 +1097,8 @@ dependencies = [
  "mock-http-connector",
  "opensovd-models",
  "percent-encoding",
+ "regex",
+ "semver",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
@@ -1128,6 +1130,8 @@ dependencies = [
  "hyper",
  "libcli",
  "opensovd-client",
+ "opensovd-models",
+ "serde_json",
  "tokio",
  "tower-http",
  "tracing",
@@ -1138,6 +1142,8 @@ name = "opensovd-examples-server"
 version = "0.1.1"
 dependencies = [
  "async-trait",
+ "axum",
+ "http",
  "jsonwebtoken",
  "libcli",
  "opensovd-core",

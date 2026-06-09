@@ -3,6 +3,7 @@
 
 #![allow(clippy::missing_errors_doc)]
 
+pub mod capability;
 mod client;
 mod data;
 pub mod entities;

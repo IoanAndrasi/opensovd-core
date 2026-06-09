@@ -12,6 +12,10 @@ publish = false
 name = "client"
 path = "src/client.rs"
 
+[[example]]
+name = "offline-capability"
+path = "src/offline_capability.rs"
+
 [dependencies]
 bytes = { workspace = true }
 clap = { workspace = true, features = ["derive", "help", "std", "usage"] }
@@ -20,6 +24,8 @@ http-body-util = { workspace = true }
 hyper = { workspace = true, features = ["http1"] }
 libcli = { workspace = true }
 opensovd-client = { workspace = true }
+opensovd-models = { workspace = true }
+serde_json = { workspace = true, features = ["std"] }
 tokio = { workspace = true, features = ["net", "rt", "macros", "signal"] }
 tower-http = { workspace = true, features = ["trace"] }
 tracing = { workspace = true }

@@ -26,11 +26,16 @@ name = "mtls"
 path = "mtls/mtls.rs"
 required-features = ["tls"]
 
+[[example]]
+name = "offline-capability"
+path = "offline/offline_capability.rs"
+
 [features]
 tls = ["opensovd-server/tls", "dep:rustls"]
 
 [dependencies]
 async-trait = { workspace = true }
+axum = { workspace = true, features = ["tokio", "http1"] }
 jsonwebtoken = { workspace = true }
 libcli = { workspace = true }
 opensovd-core = { workspace = true }
@@ -40,6 +45,7 @@ opensovd-models = { workspace = true }
 opensovd-providers = { workspace = true }
 opensovd-server = { workspace = true }
 rustls = { workspace = true, optional = true }
+http = { workspace = true }
 sysinfo = { workspace = true }
 tokio = { workspace = true, features = ["net", "rt-multi-thread", "macros", "fs"] }
 tracing = { workspace = true }
