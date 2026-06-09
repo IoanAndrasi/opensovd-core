@@ -15,8 +15,21 @@ SERVER_PID=$!
 trap 'kill $SERVER_PID 2>/dev/null || true' EXIT
 
 echo "[3/4] Probe endpoint"
-curl -sS --retry 20 --retry-connrefused --retry-delay 1 \
-  http://127.0.0.1:7790/offline-capability >/tmp/offline-capability.json
+READY=0
+for _ in $(seq 1 30); do
+  if curl -fsS http://127.0.0.1:7790/offline-capability >/tmp/offline-capability.json 2>/dev/null; then
+    READY=1
+    break
+  fi
+  sleep 1
+done
+
+if [ "$READY" -ne 1 ]; then
+  echo "offline-capability server did not become ready on 127.0.0.1:7790" >&2
+  echo "--- server log ---" >&2
+  tail -n 80 /tmp/offline-capability-demo.log >&2 || true
+  exit 1
+fi
 
 echo "[4/4] Show key fields"
 python3 - <<'PY'
