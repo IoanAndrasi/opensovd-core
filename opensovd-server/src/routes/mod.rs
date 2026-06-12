@@ -17,10 +17,15 @@
 //! - GET /components/{component_id}/data/{data_id} - Read a data value
 //! - PUT /components/{component_id}/data/{data_id} - Write a data value
 //!
+//! ## Online capability descriptions
+//! - GET /{entity-path}/data/{data_id}/docs - Self-contained OpenAPI 3.1 spec
+//!   describing the data resource (currently for components and apps)
+//!
 //! ## Version
 //! - GET /version-info - Get SOVD server version information
 
 mod data;
+mod docs;
 mod entities;
 mod error;
 mod version;
