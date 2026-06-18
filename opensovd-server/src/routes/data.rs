@@ -7,15 +7,15 @@
 //! - GET /components/{component_id}/data-categories - List data categories
 //! - GET /components/{component_id}/data-groups - List data groups
 //! - GET /components/{component_id}/data - List data resources
+//! - GET /components/{component_id}/data/docs - Online capability description
 //! - GET /components/{component_id}/data/{data_id} - Read a data value
 //! - PUT /components/{component_id}/data/{data_id} - Write a data value
-//! - GET /components/{component_id}/data/{data_id}/docs - Online capability description
 //! - GET /apps/{app_id}/data-categories - List app data categories
 //! - GET /apps/{app_id}/data-groups - List app data groups
 //! - GET /apps/{app_id}/data - List app data resources
+//! - GET /apps/{app_id}/data/docs - Online capability description
 //! - GET /apps/{app_id}/data/{data_id} - Read an app data value
 //! - PUT /apps/{app_id}/data/{data_id} - Write an app data value
-//! - GET /apps/{app_id}/data/{data_id}/docs - Online capability description
 
 use axum::{
     Router,
@@ -25,7 +25,7 @@ use axum::{
     routing::get,
 };
 use axum_extra::extract::{Query, WithRejection};
-use opensovd_core::{DataError, DataFilter, DataProvider, DataScope, Topology};
+use opensovd_core::{DataFilter, DataProvider, DataScope, Topology};
 use opensovd_models::Response;
 use opensovd_models::data::{
     DataCategories, DataCategoryInformation, DataGroups, DataGroupsQuery, DataList, DataQuery,
@@ -51,21 +51,32 @@ where
         )
         .route("/components/{component_id}/data", get(component_data_list))
         .route(
-            "/components/{component_id}/data/{data_id}",
-            get(component_data_read).put(component_data_write),
+            "/components/{component_id}/data/docs",
+            get(component_data_collection_docs),
         )
         .route(
-            "/components/{component_id}/data/{data_id}/docs",
-            get(component_data_docs),
+            "/components/{component_id}/data/{data_id}",
+            get(component_data_read).put(component_data_write),
         )
         .route("/apps/{app_id}/data-categories", get(app_data_categories))
         .route("/apps/{app_id}/data-groups", get(app_data_groups))
         .route("/apps/{app_id}/data", get(app_data_list))
+        .route("/apps/{app_id}/data/docs", get(app_data_collection_docs))
         .route(
             "/apps/{app_id}/data/{data_id}",
             get(app_data_read).put(app_data_write),
         )
-        .route("/apps/{app_id}/data/{data_id}/docs", get(app_data_docs))
+}
+
+fn response_metadata(metadata: opensovd_core::Metadata) -> Metadata {
+    Metadata {
+        id: metadata.id,
+        name: metadata.name,
+        category: metadata.category.into(),
+        translation_id: metadata.translation_id,
+        groups: (!metadata.groups.is_empty()).then_some(metadata.groups),
+        tags: (!metadata.tags.is_empty()).then_some(metadata.tags),
+    }
 }
 
 /// GET /components/{component_id}/data-categories - List data categories.
@@ -184,14 +195,7 @@ async fn component_data_list(
         .list(filter)
         .await?
         .into_iter()
-        .map(|m| Metadata {
-            id: m.id,
-            name: m.name,
-            category: m.category.into(),
-            translation_id: m.translation_id,
-            groups: (!m.groups.is_empty()).then_some(m.groups),
-            tags: (!m.tags.is_empty()).then_some(m.tags),
-        })
+        .map(response_metadata)
         .collect();
 
     Ok(Json(Response {
@@ -246,47 +250,36 @@ async fn component_data_write(
     Ok(StatusCode::NO_CONTENT)
 }
 
-/// Shared body for the data `/docs` handlers: look the resource up and describe
-/// the methods it actually supports. `404` when there is no data provider or no
-/// such `data_id`.
-async fn data_docs(
+/// Shared body for the collection `/data/docs` handlers.
+async fn data_collection_docs(
     provider: Option<&dyn DataProvider>,
-    data_id: &str,
-    resource_path: &str,
+    collection_path: &str,
 ) -> Result<Json<serde_json::Value>> {
     let provider = provider.ok_or_else(|| Error::ProviderNotAvailable("data".into()))?;
-
-    let metadata = provider
+    let items = provider
         .list(DataFilter::default())
         .await?
         .into_iter()
-        .find(|m| m.id == data_id)
-        .ok_or_else(|| Error::Data(DataError::NotFound(data_id.to_owned())))?;
+        .map(response_metadata)
+        .collect::<Vec<_>>();
 
-    Ok(Json(docs::data_resource_docs(
-        resource_path,
-        metadata.is_readable,
-        metadata.is_writable,
-        metadata.schema.as_ref(),
-    )))
+    Ok(Json(docs::data_collection_docs(collection_path, &items)))
 }
 
-/// GET /components/{component_id}/data/{data_id}/docs - Online capability description.
-///
-/// Returns the self-contained OpenAPI 3.1 description of a component data
-/// resource (ISO 17978-3 §7.5), documenting the methods the resource actually
-/// supports.
-async fn component_data_docs(
+/// GET /components/{component_id}/data/docs
+/// Returns the self-contained OpenAPI 3.1 description of the component data
+/// collection endpoint, including the current metadata entries.
+async fn component_data_collection_docs(
     State(topology): State<Topology>,
-    Path((component_id, data_id)): Path<(String, String)>,
+    Path(component_id): Path<String>,
 ) -> Result<Json<serde_json::Value>> {
     let topo = topology.read().await;
     let entity = topo
         .get_component(&component_id)
         .map_err(|_| Error::EntityNotFound(component_id.clone()))?;
 
-    let resource_path = format!("/components/{component_id}/data/{data_id}");
-    data_docs(entity.data_provider(), &data_id, &resource_path).await
+    let collection_path = format!("/components/{component_id}/data");
+    data_collection_docs(entity.data_provider(), &collection_path).await
 }
 
 /// GET /apps/{app_id}/data-categories - List app data categories.
@@ -383,14 +376,7 @@ async fn app_data_list(
         .list(filter)
         .await?
         .into_iter()
-        .map(|m| Metadata {
-            id: m.id,
-            name: m.name,
-            category: m.category.into(),
-            translation_id: m.translation_id,
-            groups: (!m.groups.is_empty()).then_some(m.groups),
-            tags: (!m.tags.is_empty()).then_some(m.tags),
-        })
+        .map(response_metadata)
         .collect();
 
     Ok(Json(Response {
@@ -445,21 +431,20 @@ async fn app_data_write(
     Ok(StatusCode::NO_CONTENT)
 }
 
-/// GET /apps/{app_id}/data/{data_id}/docs - Online capability description.
-///
-/// Returns the self-contained OpenAPI 3.1 description of an app data resource
-/// documenting the methods the resource actually supports.
-async fn app_data_docs(
+/// GET /apps/{app_id}/data/docs
+/// Returns the self-contained OpenAPI 3.1 description of the app data
+/// collection endpoint, including the current metadata entries.
+async fn app_data_collection_docs(
     State(topology): State<Topology>,
-    Path((app_id, data_id)): Path<(String, String)>,
+    Path(app_id): Path<String>,
 ) -> Result<Json<serde_json::Value>> {
     let topo = topology.read().await;
     let entity = topo
         .get_app(&app_id)
         .map_err(|_| Error::EntityNotFound(app_id.clone()))?;
 
-    let resource_path = format!("/apps/{app_id}/data/{data_id}");
-    data_docs(entity.data_provider(), &data_id, &resource_path).await
+    let collection_path = format!("/apps/{app_id}/data");
+    data_collection_docs(entity.data_provider(), &collection_path).await
 }
 
 #[cfg(test)]

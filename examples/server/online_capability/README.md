@@ -1,10 +1,10 @@
 # Online Capability Description Example
 
-SOVD **online capability description**
-ISO 17978-3: appending `/docs` to any data resource path returns
-a self-contained OpenAPI 3.1 specification describing how to interact with that
-resource — its supported HTTP methods, request/response schemas, and status
-codes — without needing an overall offline capability description.
+SOVD online capability description
+ISO 17978-3: appending `/docs` to a SOVD endpoint returns a self-contained
+OpenAPI 3.1 specification describing how to interact with that endpoint.
+For the data API, this example exposes the collection endpoint
+`/components/{component-id}/data/docs`.
 
 ## Topology
 
@@ -12,7 +12,10 @@ codes — without needing an overall offline capability description.
 SOVDServer
   └── Component: "engine"
         └── Data Provider
-              └── rpm  (read-write, CurrentData)
+      ├── rpm                  (read-write, CurrentData)
+      ├── coolant_temperature  (read-only, CurrentData)
+      ├── battery_voltage      (read-only, SysInfo)
+      └── serial_number        (read-only, IdentData)
 ```
 
 ## Running
@@ -26,6 +29,9 @@ The server starts on `http://127.0.0.1:7691`.
 ## Example Requests
 
 ```bash
+# Retrieve the ONLINE CAPABILITY DESCRIPTION for the data collection
+curl -s http://localhost:7691/sovd/v1/components/engine/data/docs | jq
+
 # Read the data resource value
 curl -s http://localhost:7691/sovd/v1/components/engine/data/rpm | jq
 
@@ -34,78 +40,61 @@ curl -s -X PUT http://localhost:7691/sovd/v1/components/engine/data/rpm \
   -H 'Content-Type: application/json' \
   -d '{"data": {"value": 1500.0}}'
 
-# Retrieve the ONLINE CAPABILITY DESCRIPTION for the resource
-curl -s http://localhost:7691/sovd/v1/components/engine/data/rpm/docs | jq
+# Read another resource from the same collection
+curl -s http://localhost:7691/sovd/v1/components/engine/data/coolant_temperature | jq
 ```
 
-The `/docs` response is a valid OpenAPI 3.1 document. It documents the methods
-the resource actually supports (`GET` and `PUT` here, since `rpm` is
-read-write), the `include-schema` query parameter, the `200` / `204` / `404`
-status codes, and the request/response payload schemas.
+The collection-level `/data/docs` response documents the list endpoint,
+including the `groups`, `categories`, `tags`, and `include-schema` query
+parameters, and includes an example payload with the currently exposed metadata.
 
-Notably, the `data` field of each payload carries the resource's **own value
-schema**, sourced dynamically from the data provider — so a client sees that
-`rpm` reads and writes `{ "value": <number> }`, not just an opaque object
-(abbreviated below):
+The response documents the collection endpoint in a self-contained way and
+includes an example metadata payload, abbreviated below:
 
 ```json
 {
   "openapi": "3.1.0",
-  "info": { "title": "Data resource /components/engine/data/rpm", "version": "1.0.0" },
+  "info": { "title": "Data collection /components/engine/data", "version": "1.0.0" },
   "paths": {
-    "/components/engine/data/rpm": {
+    "/components/engine/data": {
       "get": {
-        "summary": "Read the value of the data resource",
+        "summary": "List the data resources of the entity",
         "parameters": [
+          { "name": "groups", "in": "query", "schema": { "type": "array", "items": { "type": "string" } } },
+          { "name": "categories", "in": "query", "schema": { "type": "array", "items": { "type": "string" } } },
+          { "name": "tags", "in": "query", "schema": { "type": "array", "items": { "type": "string" } } },
           { "name": "include-schema", "in": "query", "schema": { "type": "boolean" } }
         ],
         "responses": {
           "200": {
             "content": {
               "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "id": { "type": "string" },
-                    "data": {
-                      "type": "object",
-                      "properties": { "value": { "type": "number", "format": "double" } },
-                      "required": ["value"]
+                "example": {
+                  "items": [
+                    {
+                      "id": "rpm",
+                      "name": "Engine RPM set-point",
+                      "category": "currentData",
+                      "translation_id": "engine.rpm.setpoint",
+                      "groups": ["actuators", "powertrain"],
+                      "tags": ["live", "control"]
+                    },
+                    {
+                      "id": "coolant_temperature",
+                      "name": "Coolant Temperature",
+                      "category": "currentData",
+                      "translation_id": "engine.coolant.temperature",
+                      "groups": ["sensors", "thermal"],
+                      "tags": ["live", "safety"]
                     }
-                  },
-                  "required": ["id", "data"]
+                  ]
                 }
               }
             }
-          },
-          "404": {}
-        }
-      },
-      "put": {
-        "summary": "Write the value of the data resource",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "properties": {
-                  "data": {
-                    "type": "object",
-                    "properties": { "value": { "type": "number", "format": "double" } },
-                    "required": ["value"]
-                  }
-                },
-                "required": ["data"]
-              }
-            }
           }
-        },
-        "responses": { "204": {}, "404": {} }
+        }
       }
     }
   }
 }
 ```
-
-> A read-only resource omits the `put` entry entirely, and a resource whose
-> provider supplies no schema falls back to an opaque `data` object.

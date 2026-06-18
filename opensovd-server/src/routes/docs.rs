@@ -4,12 +4,12 @@
 //! SOVD online capability descriptions.
 //!
 //! `GET /{path}/docs` returns a self-contained OpenAPI 3.1 document for a single
-//! resource: its methods, payload schemas and status codes. A client can use it
+//! endpoint: its methods, payload schemas and status codes. A client can use it
 //! without an offline capability description for the whole vehicle.
 //!
-//! Only the data resource is wired up so far; see [`data_resource_docs`].
+//! Data collection endpoints are wired up so far; see [`data_collection_docs`].
 
-use opensovd_models::data::{ReadResponse, WriteRequest};
+use opensovd_models::data::{DataList, Metadata};
 use serde_json::{Value, json};
 
 use crate::schema::JsonSchema;
@@ -29,177 +29,128 @@ pub fn build_openapi_doc(title: &str, path: &str, path_item: Value) -> Value {
     })
 }
 
-/// Describe a single data resource as an OpenAPI document.
+/// Describe a data collection endpoint as an OpenAPI document.
 ///
-/// `GET` is included when `readable`, `PUT` when `writable`. A `resource_schema`,
-/// if present, is inlined into the payload `data` field so the doc shows the real
-/// value shape instead of an opaque object.
-pub fn data_resource_docs(
-    resource_path: &str,
-    readable: bool,
-    writable: bool,
-    resource_schema: Option<&Value>,
-) -> Value {
-    let mut path_item = serde_json::Map::new();
-
-    if readable {
-        path_item.insert("get".to_owned(), read_operation(resource_schema));
-    }
-    if writable {
-        path_item.insert("put".to_owned(), write_operation(resource_schema));
-    }
-
+/// The document covers `GET /.../data` and includes the collection's query
+/// parameters plus an example payload containing the current metadata entries.
+pub fn data_collection_docs(collection_path: &str, items: &[Metadata]) -> Value {
     build_openapi_doc(
-        &format!("Data resource {resource_path}"),
-        resource_path,
-        Value::Object(path_item),
+        &format!("Data collection {collection_path}"),
+        collection_path,
+        json!({
+            "get": {
+                "summary": "List the data resources of the entity",
+                "parameters": list_query_parameters(),
+                "responses": {
+                    "200": {
+                        "description": "The data resources currently exposed by the entity.",
+                        "content": {
+                            "application/json": {
+                                "schema": data_list_response_schema(),
+                                "example": {
+                                    "items": items,
+                                },
+                            },
+                        },
+                    },
+                    "404": { "description": "The entity was not found." },
+                },
+            }
+        }),
     )
 }
 
-/// Splice the resource's value schema into the `data` field of an envelope schema
-/// ([`ReadResponse`] / [`WriteRequest`]). Returns the envelope untouched when
-/// there is no schema to splice in.
-fn with_data_schema(mut envelope: Value, resource_schema: Option<&Value>) -> Value {
-    let Some(schema) = resource_schema else {
-        return envelope;
-    };
-    if let Some(data) = envelope.pointer_mut("/properties/data") {
-        let mut schema = schema.clone();
-        // $schema belongs on a document root, not on an inlined subschema.
-        if let Some(obj) = schema.as_object_mut() {
-            obj.remove("$schema");
-        }
-        *data = schema;
-    }
-    envelope
-}
-
-/// The `GET` (read) operation.
-fn read_operation(resource_schema: Option<&Value>) -> Value {
-    let response_schema = with_data_schema(ReadResponse::schema(), resource_schema);
-    json!({
-        "summary": "Read the value of the data resource",
-        "parameters": [
-            {
-                "name": "include-schema",
-                "in": "query",
-                "required": false,
-                "description": "Include the JSON schema of the value in the response.",
-                "schema": { "type": "boolean", "default": false },
+/// Document the `GET /.../data` query parameters using ISO-style repeated keys.
+fn list_query_parameters() -> Value {
+    json!([
+        {
+            "name": "groups",
+            "in": "query",
+            "required": false,
+            "description": "Filter by data group. Repeat the parameter to select multiple groups.",
+            "style": "form",
+            "explode": true,
+            "schema": {
+                "type": "array",
+                "items": { "type": "string" }
             }
-        ],
-        "responses": {
-            "200": {
-                "description": "The current value of the data resource.",
-                "content": {
-                    "application/json": { "schema": response_schema },
-                },
-            },
-            "404": { "description": "The entity or data resource was not found." },
         },
-    })
+        {
+            "name": "categories",
+            "in": "query",
+            "required": false,
+            "description": "Filter by data category. Repeat the parameter to select multiple categories.",
+            "style": "form",
+            "explode": true,
+            "schema": {
+                "type": "array",
+                "items": { "type": "string" }
+            }
+        },
+        {
+            "name": "tags",
+            "in": "query",
+            "required": false,
+            "description": "Filter by tag. Repeat the parameter to select multiple tags.",
+            "style": "form",
+            "explode": true,
+            "schema": {
+                "type": "array",
+                "items": { "type": "string" }
+            }
+        },
+        {
+            "name": "include-schema",
+            "in": "query",
+            "required": false,
+            "description": "Include the JSON schema of the data list response in the response body.",
+            "schema": { "type": "boolean", "default": false }
+        }
+    ])
 }
 
-/// The `PUT` (write) operation.
-fn write_operation(resource_schema: Option<&Value>) -> Value {
-    let request_schema = with_data_schema(WriteRequest::schema(), resource_schema);
-    json!({
-        "summary": "Write the value of the data resource",
-        "requestBody": {
-            "required": true,
-            "content": {
-                "application/json": { "schema": request_schema },
-            },
-        },
-        "responses": {
-            "204": { "description": "The value was written successfully." },
-            "404": { "description": "The entity or data resource was not found." },
-        },
-    })
+/// Schema for the `/data` response envelope.
+fn data_list_response_schema() -> Value {
+    let mut schema = DataList::schema();
+    if let Some(properties) = schema.get_mut("properties").and_then(Value::as_object_mut) {
+        properties.insert(
+            "schema".to_owned(),
+            json!({
+                "type": "object",
+                "description": "Optional JSON Schema for the data list response when include-schema=true."
+            }),
+        );
+    }
+    schema
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn value_schema() -> Value {
-        json!({
-            "$schema": "https://json-schema.org/draft/2020-12/schema",
-            "type": "object",
-            "properties": { "value": { "type": "number" } },
-            "required": ["value"],
-        })
-    }
-
     #[test]
-    fn read_write_resource_documents_both_methods() {
-        let schema = value_schema();
-        let doc = data_resource_docs("/components/Engine/data/Rpm", true, true, Some(&schema));
-
-        assert_eq!(doc["openapi"], "3.1.0");
-        assert_eq!(
-            doc["info"]["title"],
-            "Data resource /components/Engine/data/Rpm"
+    fn data_collection_documents_get_with_filters_and_example_items() {
+        let doc = data_collection_docs(
+            "/components/Engine/data",
+            &[Metadata {
+                id: "rpm".into(),
+                name: "rpm".into(),
+                category: opensovd_models::data::DataCategory::CurrentData,
+                translation_id: None,
+                groups: Some(vec!["powertrain".into()]),
+                tags: Some(vec!["OBD".into()]),
+            }],
         );
-
-        let path = &doc["paths"]["/components/Engine/data/Rpm"];
-        assert!(path["get"].is_object(), "GET method must be documented");
-        assert!(path["put"].is_object(), "PUT method must be documented");
-
-        assert!(
-            path["get"]["responses"]["200"]["content"]["application/json"]["schema"].is_object()
-        );
-        assert!(path["put"]["requestBody"]["content"]["application/json"]["schema"].is_object());
-
-        assert_eq!(path["get"]["parameters"][0]["name"], "include-schema");
-    }
-
-    #[test]
-    fn resource_schema_is_inlined_into_the_data_field() {
-        let schema = value_schema();
-        let doc = data_resource_docs("/components/Engine/data/Rpm", true, true, Some(&schema));
-        let path = &doc["paths"]["/components/Engine/data/Rpm"];
-
-        // The resource's own value schema ends up under data on the read side...
-        let read_data = &path["get"]["responses"]["200"]["content"]["application/json"]["schema"]["properties"]
-            ["data"];
-        assert_eq!(read_data["properties"]["value"]["type"], "number");
-        assert!(read_data.get("$schema").is_none());
-
-        // ...and on the write side.
-        let write_data = &path["put"]["requestBody"]["content"]["application/json"]["schema"]["properties"]
-            ["data"];
-        assert_eq!(write_data["properties"]["value"]["type"], "number");
-    }
-
-    #[test]
-    fn without_resource_schema_data_stays_opaque() {
-        let doc = data_resource_docs("/components/Engine/data/Rpm", true, false, None);
-        let path = &doc["paths"]["/components/Engine/data/Rpm"];
-
-        // No schema from the provider, so data keeps the envelope's opaque shape.
-        let read_data = &path["get"]["responses"]["200"]["content"]["application/json"]["schema"]["properties"]
-            ["data"];
-        assert_eq!(read_data["properties"]["value"]["type"], Value::Null);
-    }
-
-    #[test]
-    fn read_only_resource_documents_get_but_not_put() {
-        let schema = value_schema();
-        let doc = data_resource_docs("/components/Engine/data/Rpm", true, false, Some(&schema));
-        let path = &doc["paths"]["/components/Engine/data/Rpm"];
+        let path = &doc["paths"]["/components/Engine/data"];
 
         assert!(path["get"].is_object(), "GET must be documented");
         assert!(path["put"].is_null(), "PUT must not be documented");
-    }
-
-    #[test]
-    fn write_only_resource_documents_put_but_not_get() {
-        let schema = value_schema();
-        let doc = data_resource_docs("/components/Engine/data/Rpm", false, true, Some(&schema));
-        let path = &doc["paths"]["/components/Engine/data/Rpm"];
-
-        assert!(path["put"].is_object(), "PUT must be documented");
-        assert!(path["get"].is_null(), "GET must not be documented");
+        assert_eq!(path["get"]["parameters"][0]["name"], "groups");
+        assert_eq!(path["get"]["parameters"][0]["explode"], true);
+        assert_eq!(
+            path["get"]["responses"]["200"]["content"]["application/json"]["example"]["items"][0]
+                ["id"],
+            "rpm"
+        );
     }
 }

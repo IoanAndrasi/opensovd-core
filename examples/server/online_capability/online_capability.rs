@@ -6,17 +6,17 @@
 //! Online capability description example (ISO 17978-3).
 //!
 //! Starts a server on port 7691 with a single "engine" component that exposes
-//! one read-write data resource. The point of interest is the SOVD *online
-//! capability description*: appending `/docs` to a data resource path returns a
-//! self-contained OpenAPI 3.1 specification describing how to interact with that
-//! resource (supported methods, request/response schemas, status codes).
+//! several data resources. The point of interest is the SOVD *online
+//! capability description*: appending `/docs` to the data collection path returns
+//! a self-contained OpenAPI 3.1 specification describing how to interact with
+//! that endpoint.
 //!
 //! Run with: `cargo run -p opensovd-examples-server --example online_capability`
 //!
 //! Then query the online capability description:
 //!
 //! ```bash
-//! curl -s http://localhost:7691/sovd/v1/components/engine/data/rpm/docs | jq
+//! curl -s http://localhost:7691/sovd/v1/components/engine/data/docs | jq
 //! ```
 
 use std::sync::{Arc, Mutex};
@@ -25,13 +25,12 @@ use async_trait::async_trait;
 use opensovd_core::Component;
 use opensovd_models::data::DataCategory;
 use opensovd_providers::data::{
-    DataProviderBuilder, ReadableDataResource, Value, WriteableDataResource,
+    Constant, DataProviderBuilder, ReadableDataResource, Value, WriteableDataResource,
 };
 use opensovd_server::{Server, Topology};
 use tokio::net::TcpListener;
 
-/// In-memory engine RPM set-point. It's read-write, so its `/docs` description
-/// lists both `GET` and `PUT`.
+/// In-memory engine RPM set-point for the example data collection.
 struct Rpm(Arc<Mutex<f64>>);
 
 impl Rpm {
@@ -70,7 +69,8 @@ impl WriteableDataResource for Rpm {
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     libcli::init_tracing("info", None)?;
 
-    // A single read-write data resource on the "engine" component.
+    // A mixed collection of engine resources so `/data/docs` shows a useful
+    // metadata example instead of a single row.
     let provider = DataProviderBuilder::new()
         .data(
             "rpm",
@@ -78,6 +78,36 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             &DataCategory::CurrentData,
             Rpm::new(),
         )
+        .groups(["actuators", "powertrain"])
+        .tags(["live", "control"])
+        .translation_id("engine.rpm.setpoint")
+        .read_data(
+            "coolant_temperature",
+            "Coolant Temperature",
+            &DataCategory::CurrentData,
+            Constant::new(92.5)?,
+        )
+        .groups(["sensors", "thermal"])
+        .tags(["live", "safety"])
+        .translation_id("engine.coolant.temperature")
+        .read_data(
+            "battery_voltage",
+            "Battery Voltage",
+            &DataCategory::SysInfo,
+            Constant::new(13.8)?,
+        )
+        .groups(["electrical"])
+        .tags(["live", "power"])
+        .translation_id("engine.battery.voltage")
+        .read_data(
+            "serial_number",
+            "ECU Serial Number",
+            &DataCategory::IdentData,
+            Constant::new("ENG-ECU-42")?,
+        )
+        .groups(["identity"])
+        .tags(["inventory"])
+        .translation_id("engine.ecu.serial")
         .build()?;
 
     let engine = Component::new("engine", "Engine Control Unit").with_data_provider(provider);
@@ -98,7 +128,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     tracing::info!(
         "Server running. Try: curl -s \
-         http://localhost:7691/sovd/v1/components/engine/data/rpm/docs | jq"
+         http://localhost:7691/sovd/v1/components/engine/data/docs | jq"
     );
     server.serve().await?;
     Ok(())
