@@ -15,18 +15,82 @@ use serde_json::{Value, json};
 use crate::schema::JsonSchema;
 
 /// Wrap a single path item into a self-contained OpenAPI 3.1 document.
+///
+/// Embedded JSON Schemas (e.g. from `schemars`) carry their reusable
+/// definitions under `$defs` and reference them with `#/$defs/...`. Inside an
+/// OpenAPI document such fragment references resolve against the document root,
+/// where no `$defs` exists. To keep the result a valid OpenAPI 3.1 document, the
+/// definitions are hoisted into the document-level `components/schemas` and the
+/// references are rewritten to `#/components/schemas/...`.
 pub fn build_openapi_doc(title: &str, path: &str, path_item: Value) -> Value {
+    let mut path_item = path_item;
+    let mut schemas = serde_json::Map::new();
+    hoist_schema_defs(&mut path_item, &mut schemas);
+
     let mut paths = serde_json::Map::new();
     paths.insert(path.to_owned(), path_item);
 
-    json!({
-        "openapi": "3.1.0",
-        "info": {
-            "title": title,
-            "version": "1.0.0",
-        },
-        "paths": paths,
-    })
+    let mut doc = serde_json::Map::new();
+    doc.insert("openapi".to_owned(), json!("3.1.0"));
+    doc.insert(
+        "info".to_owned(),
+        json!({ "title": title, "version": "1.0.0" }),
+    );
+    doc.insert("paths".to_owned(), Value::Object(paths));
+    if !schemas.is_empty() {
+        doc.insert(
+            "components".to_owned(),
+            json!({ "schemas": Value::Object(schemas) }),
+        );
+    }
+
+    let mut doc = Value::Object(doc);
+    rewrite_defs_refs(&mut doc);
+    doc
+}
+
+/// Move every embedded `$defs` map into a shared schema map.
+fn hoist_schema_defs(value: &mut Value, schemas: &mut serde_json::Map<String, Value>) {
+    match value {
+        Value::Object(map) => {
+            if let Some(Value::Object(defs)) = map.remove("$defs") {
+                for (name, def) in defs {
+                    schemas.entry(name).or_insert(def);
+                }
+            }
+            for child in map.values_mut() {
+                hoist_schema_defs(child, schemas);
+            }
+        }
+        Value::Array(items) => {
+            for child in items {
+                hoist_schema_defs(child, schemas);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Rewrite JSON Schema `#/$defs/...` references to OpenAPI `#/components/schemas/...`.
+fn rewrite_defs_refs(value: &mut Value) {
+    match value {
+        Value::Object(map) => {
+            if let Some(Value::String(reference)) = map.get_mut("$ref")
+                && let Some(name) = reference.strip_prefix("#/$defs/")
+            {
+                *reference = format!("#/components/schemas/{name}");
+            }
+            for child in map.values_mut() {
+                rewrite_defs_refs(child);
+            }
+        }
+        Value::Array(items) => {
+            for child in items {
+                rewrite_defs_refs(child);
+            }
+        }
+        _ => {}
+    }
 }
 
 /// Describe a data collection endpoint as an OpenAPI document.
@@ -152,5 +216,56 @@ mod tests {
                 ["id"],
             "rpm"
         );
+    }
+
+    /// Collect every `$ref` string in a JSON value.
+    fn collect_refs(value: &Value, out: &mut Vec<String>) {
+        match value {
+            Value::Object(map) => {
+                if let Some(Value::String(reference)) = map.get("$ref") {
+                    out.push(reference.clone());
+                }
+                for child in map.values() {
+                    collect_refs(child, out);
+                }
+            }
+            Value::Array(items) => items.iter().for_each(|v| collect_refs(v, out)),
+            _ => {}
+        }
+    }
+
+    #[test]
+    fn embedded_schema_defs_are_hoisted_to_components_and_refs_resolve() {
+        let doc = data_collection_docs(
+            "/components/Engine/data",
+            &[Metadata {
+                id: "rpm".into(),
+                name: "rpm".into(),
+                category: opensovd_models::data::DataCategory::CurrentData,
+                translation_id: None,
+                groups: None,
+                tags: None,
+            }],
+        );
+
+        let mut refs = Vec::new();
+        collect_refs(&doc, &mut refs);
+
+        // No JSON-Schema-local `$defs` references must leak into the document.
+        assert!(
+            refs.iter().all(|r| !r.starts_with("#/$defs/")),
+            "found unrewritten $defs refs: {refs:?}"
+        );
+
+        // Every `#/components/schemas/...` reference must resolve.
+        let schemas = &doc["components"]["schemas"];
+        for reference in &refs {
+            if let Some(name) = reference.strip_prefix("#/components/schemas/") {
+                assert!(
+                    schemas.get(name).is_some(),
+                    "dangling reference {reference} (schemas: {schemas:?})"
+                );
+            }
+        }
     }
 }
