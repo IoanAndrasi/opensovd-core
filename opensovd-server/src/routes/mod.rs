@@ -10,6 +10,14 @@
 //! - GET /components - List all components
 //! - GET /components/{component_id} - Query capabilities of a component
 //!
+//! ## Bulkdata
+//! - GET    /{entity-collection}/{entity-id}/bulk-data - List bulk-data categories
+//! - GET    /{entity-collection}/{entity-id}/bulk-data/{category} - List of BulkDataDescriptors for a specific category
+//! - POST   /{entity-collection}/{entity-id}/bulk-data/{category} - Upload bulk data to the SOVD server and create a resource for the bulk data
+//! - DELETE /{entity-collection}/{entity-id}/bulk-data/{category} - Delete all bulk data resources for a specific category
+//! - GET    /{entity-collection}/{entity-id}/bulk-data/{category}/{bulk-data-id} - Download a specific bulk data resource
+//! - DELETE /{entity-collection}/{entity-id}/bulk-data/{category}/{bulk-data-id} - Delete a specific bulk data resource
+//!
 //! ## Data
 //! - GET /components/{component_id}/data-categories - List data categories
 //! - GET /components/{component_id}/data-groups - List data groups
@@ -20,12 +28,13 @@
 //! ## Version
 //! - GET /version-info - Get SOVD server version information
 
+mod bulkdata;
 mod data;
 mod entities;
 mod error;
 mod version;
 
-use axum::{Router, extract::FromRef, http::request::Parts};
+use axum::{Extension, Router, extract::FromRef, http::request::Parts};
 use http::header::HOST;
 use opensovd_core::Topology;
 pub use opensovd_models::version::{VendorInfo, VersionInfo};
@@ -50,20 +59,51 @@ const API_VERSION: &str = "v1";
 /// SOVD standard version.
 pub const SOVD_VERSION: &str = "1.1";
 
+/// Scheme and mount path the server advertises, resolved from its configuration
+/// and attached to every request as an extension.
+#[derive(Clone, Debug)]
+pub(crate) struct BaseUri {
+    pub scheme: String,
+    /// Normalized mount path: leading `/`, or empty when mounted at the root.
+    pub path: String,
+}
+
+impl Default for BaseUri {
+    fn default() -> Self {
+        Self {
+            scheme: "http".to_string(),
+            path: String::new(),
+        }
+    }
+}
+
+/// Mirrors the default gateway deployment for route tests.
+#[cfg(test)]
+pub(crate) fn test_base_uri() -> Extension<BaseUri> {
+    Extension(BaseUri {
+        scheme: "http".to_string(),
+        path: "/sovd".to_string(),
+    })
+}
+
 pub(crate) fn base_uri(parts: &Parts) -> String {
+    let (scheme, path) = parts
+        .extensions
+        .get::<BaseUri>()
+        .map_or(("http", ""), |b| (b.scheme.as_str(), b.path.as_str()));
     let host = parts
         .headers
         .get(HOST)
         .and_then(|h| h.to_str().ok())
         .unwrap_or("localhost");
-    format!("http://{host}/sovd")
+    format!("{scheme}://{host}{path}")
 }
 
 pub(crate) fn versioned_uri(parts: &Parts) -> String {
     format!("{}/{API_VERSION}", base_uri(parts))
 }
 
-pub fn router<V>(vendor_info: Option<V>, topology: Topology) -> Router
+pub fn router<V>(vendor_info: Option<V>, topology: Topology, base_uri: BaseUri) -> Router
 where
     V: Serialize + Clone + Send + Sync + 'static,
     VersionInfo<V>: JsonSchema,
@@ -75,11 +115,12 @@ where
 
     let v1_routes = Router::new()
         .merge(entities::routes::<V>())
+        .merge(bulkdata::routes::<V>())
         .merge(data::routes::<V>());
 
     let router = Router::new()
         .nest(&format!("/{API_VERSION}"), v1_routes)
         .merge(version::routes::<V>());
 
-    router.with_state(state)
+    router.with_state(state).layer(Extension(base_uri))
 }

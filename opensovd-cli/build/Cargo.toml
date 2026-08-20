@@ -2,24 +2,18 @@
 # SPDX-License-Identifier: Apache-2.0
 
 [package]
-name = "opensovd-mocks"
+name = "libcli-build"
 version.workspace = true
-description.workspace = true
+description = "Build-time version stamping for the OpenSOVD binaries"
 edition.workspace = true
 license.workspace = true
 readme.workspace = true
 repository.workspace = true
 keywords.workspace = true
 categories.workspace = true
-publish = false
 
 [dependencies]
-async-trait = { workspace = true }
-bytes = { workspace = true }
-futures = { workspace = true, features = ["std", "async-await"] }
-opensovd-core = { workspace = true }
-opensovd-models = { workspace = true }
-opensovd-providers = { workspace = true }
+time = { workspace = true, features = ["formatting", "macros"] }
 
 [lints]
 workspace = true

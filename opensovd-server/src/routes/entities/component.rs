@@ -111,6 +111,14 @@ pub(super) async fn component_capabilities(
         .into()
     });
 
+    let bulk_data = entity.bulkdata_provider().map(|_| {
+        format!(
+            "{base}/components/{}/bulk-data",
+            encode_path_segment(&component_id)
+        )
+        .into()
+    });
+
     Ok(Json(Response {
         data: EntityCapabilities {
             id: component_id,
@@ -120,6 +128,7 @@ pub(super) async fn component_capabilities(
             hosts,
             belongs_to,
             data,
+            bulk_data,
             ..Default::default()
         },
         schema: query.include_schema.then(EntityCapabilities::schema),
@@ -224,7 +233,9 @@ mod tests {
             vendor_info: None,
             topology: create_mock_topology().await,
         };
-        let app = routes::<()>().with_state(state);
+        let app = routes::<()>()
+            .with_state(state)
+            .layer(crate::routes::test_base_uri());
 
         let request = Request::builder()
             .uri("/components/ecu")
@@ -256,7 +267,9 @@ mod tests {
             vendor_info: None,
             topology: create_mock_topology().await,
         };
-        let app = routes::<()>().with_state(state);
+        let app = routes::<()>()
+            .with_state(state)
+            .layer(crate::routes::test_base_uri());
 
         let request = Request::builder()
             .uri("/components")

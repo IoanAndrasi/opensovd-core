@@ -97,6 +97,10 @@ pub(super) async fn app_capabilities(
         .data_provider()
         .map(|_| format!("{base}/apps/{}/data", encode_path_segment(&app_id)).into());
 
+    let bulk_data = entity
+        .bulkdata_provider()
+        .map(|_| format!("{base}/apps/{}/bulk-data", encode_path_segment(&app_id)).into());
+
     Ok(Json(Response {
         data: EntityCapabilities {
             id: app_id,
@@ -106,6 +110,7 @@ pub(super) async fn app_capabilities(
             is_located_on,
             belongs_to,
             data,
+            bulk_data,
             ..Default::default()
         },
         schema: query.include_schema.then(EntityCapabilities::schema),
@@ -202,7 +207,9 @@ mod tests {
             vendor_info: None,
             topology: create_mock_topology().await,
         };
-        let app = routes::<()>().with_state(state);
+        let app = routes::<()>()
+            .with_state(state)
+            .layer(crate::routes::test_base_uri());
 
         let request = Request::builder()
             .uri("/apps/engine_control")
@@ -237,7 +244,9 @@ mod tests {
             vendor_info: None,
             topology: create_mock_topology().await,
         };
-        let app = routes::<()>().with_state(state);
+        let app = routes::<()>()
+            .with_state(state)
+            .layer(crate::routes::test_base_uri());
 
         let request = Request::builder().uri("/apps").body(Body::empty()).unwrap();
 
