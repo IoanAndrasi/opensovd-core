@@ -246,10 +246,10 @@ async fn configure_listener<Vendor, Authn, Authz, Layer>(
 
 async fn configure_topology<Vendor, Authn, Authz, Layer>(
     builder: opensovd_server::ServerBuilder<Vendor, Authn, Authz, Layer>,
-    cli: &cli::Cli,
+    _cli: &cli::Cli,
 ) -> opensovd_server::ServerBuilder<Vendor, Authn, Authz, Layer> {
     #[cfg(feature = "mock")]
-    let topology = if cli.mock {
+    let topology = if _cli.mock {
         tracing::info!(target: TARGET, "Mock topology enabled");
         create_mock_topology().await
     } else {

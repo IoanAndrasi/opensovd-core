@@ -26,6 +26,7 @@ workspace_rust_library(
         "tokio-rustls",
         "tower",
         "tracing",
+        "uuid",
     ],
     crate_features = [
         "default",

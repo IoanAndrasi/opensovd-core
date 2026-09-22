@@ -8,12 +8,14 @@ workspace_rust_library(
     name = "opensovd_mocks",
     srcs = glob(["src/**/*.rs"]),
     crate_deps = [
-        "async-trait",
         "bytes",
         "futures",
     ],
     crate_name = "opensovd_mocks",
     crate_root = "src/lib.rs",
+    proc_macro_crate_deps = [
+        "async-trait",
+    ],
     version = "0.1.1",
     deps = [
         "//opensovd-core:opensovd_core",
