@@ -8,6 +8,8 @@ workspace_rust_library(
     name = "opensovd_core",
     srcs = glob(["src/**/*.rs"]),
     crate_deps = [
+        "bytes",
+        "chrono",
         "futures-core",
         "indexmap",
         "serde_json",
