@@ -177,4 +177,3 @@ workspace_rust_test(
         "//opensovd-mocks:opensovd_mocks",
     ],
 )
-

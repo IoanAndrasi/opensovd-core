@@ -3,7 +3,7 @@ SPDX-FileCopyrightText: Copyright (c) 2026 Contributors to the Eclipse Foundatio
 SPDX-License-Identifier: Apache-2.0
 -->
 
-Bazel Notes
+# Bazel Notes
 
 This repository provides a native Bazel build based on rules_rust and
 crate_universe, aligned with the S-CORE Bazel integration approach used by
@@ -33,8 +33,8 @@ Shared Rust target wrappers from bazel/rust_crate.bzl.
 
 The relevant .bazelrc configuration is:
 
-common --registry=https://raw.githubusercontent.com/eclipse-score/bazel_registry/main/
-common --registry=https://bcr.bazel.build
+common --registry=<https://raw.githubusercontent.com/eclipse-score/bazel_registry/main/>
+common --registry=<https://bcr.bazel.build>
 common --experimental_isolated_extension_usages
 common --@rules_rust//rust/toolchain/channel=nightly
 
