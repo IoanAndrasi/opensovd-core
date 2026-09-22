@@ -7,11 +7,9 @@ exports_files(["Cargo.toml"])
 workspace_cargo_build_script(
     name = "build_script_build",
     srcs = ["build.rs"],
-    crate_deps = [
-        "time",
-    ],
     crate_name = "build_script_build",
     crate_root = "build.rs",
+    deps = ["//opensovd-cli/build:libcli_build"],
     pkg_name = "opensovd-mcp",
     version = "0.1.1",
 )
