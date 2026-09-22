@@ -7,6 +7,11 @@ exports_files(["Cargo.toml"])
 workspace_rust_library(
     name = "opensovd_mocks",
     srcs = glob(["src/**/*.rs"]),
+    crate_deps = [
+        "async-trait",
+        "bytes",
+        "futures",
+    ],
     crate_name = "opensovd_mocks",
     crate_root = "src/lib.rs",
     version = "0.1.1",
