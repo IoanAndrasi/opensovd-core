@@ -37,8 +37,5 @@ jobs:
       - name: Build Bazel workspace
         run: bazel build //:workspace
 
-      - name: Test Bazel suite
-        run: bazel test //:tests
-
       - name: Query Bazel targets
         run: bazel query //...

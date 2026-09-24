@@ -67,12 +67,9 @@ bazel build //:workspace
 
 # Build a single package
 bazel build //:opensovd-gateway
-
-# Run the Bazel test aggregate
-bazel test //:tests
 ```
 
-Current Bazel targets are package-oriented and map to native `rust_library`, `rust_binary`, and `rust_test` rules under the owning crate directories.
+Current Bazel targets are package-oriented and map to native `rust_library` and `rust_binary` rules under the owning crate directories. Cargo remains the authoritative test workflow.
 
 When dependency versions change, refresh the generated crate-universe lock metadata with:
 

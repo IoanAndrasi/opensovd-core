@@ -76,8 +76,6 @@ workspace_rust_library
 
 workspace_rust_binary
 
-workspace_rust_test
-
 workspace_cargo_build_script
 
 Third-party Cargo dependencies are declared explicitly through crate_deps or
@@ -127,10 +125,6 @@ The complete workspace can be built with:
 
 bazel build //:workspace
 
-The complete Bazel test suite can be run with:
-
-bazel test //:tests
-
 All Bazel targets can be inspected with:
 
 bazel query //...
@@ -140,21 +134,18 @@ Validated Commands
 The following commands are used for full validation:
 
 bazel build //:workspace
-bazel test //:tests
 bazel query //...
 
 For a clean validation run:
 
 bazel clean --expunge
 bazel build //:workspace
-bazel test //:tests
 bazel query //...
 
 On systems where Bazel's embedded Java runtime does not trust the local
 certificate chain, use the system JDK explicitly, for example:
 
 bazel --server_javabase="$JAVA_HOME" build //:workspace
-bazel --server_javabase="$JAVA_HOME" test //:tests
 bazel --server_javabase="$JAVA_HOME" query //...
 
 This is a local environment workaround and should not be hardcoded into the
@@ -169,14 +160,13 @@ as usual and validate the Bazel graph again:
 
 cargo check
 bazel build //:workspace
-bazel test //:tests
 
 Because crate_universe reads the root workspace manifest and Cargo.lock,
 there is no separate Bazel-specific Cargo lockfile to maintain.
 
 Adding New Targets
 
-For a new library, binary, example, test, or build script:
+For a new library, binary, example, or build script:
 
 Add the source files and update the owning Cargo.toml.
 
@@ -195,7 +185,6 @@ Run the full workspace validation.
 Example validation:
 
 bazel build //:workspace
-bazel test //:tests
 bazel query //...
 
 S-CORE Compatibility

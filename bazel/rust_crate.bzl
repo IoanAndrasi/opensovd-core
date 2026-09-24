@@ -5,7 +5,7 @@
 
 load("@crate_index//:defs.bzl", "aliases", _crate_deps = "crate_deps")
 load("@rules_rust//cargo:defs.bzl", "cargo_build_script")
-load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_test")
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library")
 
 def workspace_rust_library(
         crate_deps = [],
@@ -28,20 +28,6 @@ def workspace_rust_binary(
         **kwargs):
     """Defines a Rust 2024 binary with explicitly selected Cargo dependencies."""
     rust_binary(
-        aliases = aliases(),
-        edition = "2024",
-        deps = deps + _crate_deps(crate_deps),
-        proc_macro_deps = _crate_deps(proc_macro_crate_deps),
-        **kwargs
-    )
-
-def workspace_rust_test(
-        crate_deps = [],
-        proc_macro_crate_deps = [],
-        deps = [],
-        **kwargs):
-    """Defines a Rust 2024 test with explicitly selected Cargo dependencies."""
-    rust_test(
         aliases = aliases(),
         edition = "2024",
         deps = deps + _crate_deps(crate_deps),

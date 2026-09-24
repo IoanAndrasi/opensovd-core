@@ -92,27 +92,3 @@ filegroup(
         ":opensovd-benches",
     ],
 )
-
-test_suite(
-    name = "tests",
-    tests = [
-        "//opensovd-core:unit_test",
-        "//opensovd-extra:unit_test",
-        "//opensovd-models:unit_test",
-        "//opensovd-providers:unit_test",
-        "//opensovd-mocks:unit_test",
-        "//opensovd-server:unit_test",
-        "//opensovd-server:auth_test",
-        "//opensovd-server:builder_test",
-        "//opensovd-server:routes_test",
-        "//opensovd-client:unit_test",
-        "//opensovd-client:apps_test",
-        "//opensovd-client:areas_test",
-        "//opensovd-client:client_test",
-        "//opensovd-client:components_test",
-        "//opensovd-client:data_test",
-        "//opensovd-client:unix_test",
-        "//opensovd-cli/lib:unit_test",
-        "//opensovd-cli/mcp:unit_test",
-    ],
-)

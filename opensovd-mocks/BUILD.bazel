@@ -1,4 +1,4 @@
-load("//bazel:rust_crate.bzl", "workspace_rust_library", "workspace_rust_test")
+load("//bazel:rust_crate.bzl", "workspace_rust_library")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -22,9 +22,4 @@ workspace_rust_library(
         "//opensovd-models:opensovd_models",
         "//opensovd-providers:opensovd_providers",
     ],
-)
-
-workspace_rust_test(
-    name = "unit_test",
-    crate = ":opensovd_mocks",
 )
