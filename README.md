@@ -61,7 +61,7 @@ cargo run -p opensovd-gateway -- --mock
 
 For testing instructions, see the [Testing guide](docs/testing.md).
 
-The Bazel workspace uses `rules_rust` plus `crate_universe` to build the Rust packages as native Bazel targets. The root package keeps stable entrypoints such as `//:opensovd-core` and `//:opensovd-gateway`, while package-local targets live under their owning directories. Cargo remains the authoritative test workflow.
+The Bazel workspace uses `rules_rust` plus `crate_universe` to build the Rust packages as native Bazel targets. The root package keeps stable public entrypoints such as `//:opensovd-core` and `//:opensovd-gateway`; package-local targets are internal to the workspace. Cargo remains the authoritative test workflow.
 
 Use Bazel 8.6.0 directly or through Bazelisk so the workspace stays on the pinned version from `.bazelversion`.
 

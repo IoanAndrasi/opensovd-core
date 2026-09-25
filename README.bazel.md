@@ -109,8 +109,10 @@ manifest instead of exposing every Cargo dependency to every Rust target.
 
 Root Targets
 
-The root BUILD.bazel exposes aliases for the main workspace crates and
-binaries.
+The root BUILD.bazel exposes the public aliases for the main workspace crates
+and binaries. Package-local targets are visible only inside this workspace, so
+external consumers should depend on the root aliases rather than their backing
+targets.
 
 Examples:
 

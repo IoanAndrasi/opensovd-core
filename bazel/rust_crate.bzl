@@ -11,6 +11,7 @@ def workspace_rust_library(
         crate_deps = [],
         proc_macro_crate_deps = [],
         deps = [],
+    visibility = ["//:workspace_crates"],
         **kwargs):
     """Defines a Rust 2024 library with explicitly selected Cargo dependencies."""
     rust_library(
@@ -18,6 +19,7 @@ def workspace_rust_library(
         edition = "2024",
         deps = deps + _crate_deps(crate_deps),
         proc_macro_deps = _crate_deps(proc_macro_crate_deps),
+        visibility = visibility,
         **kwargs
     )
 
@@ -25,6 +27,7 @@ def workspace_rust_binary(
         crate_deps = [],
         proc_macro_crate_deps = [],
         deps = [],
+    visibility = ["//:workspace_crates"],
         **kwargs):
     """Defines a Rust 2024 binary with explicitly selected Cargo dependencies."""
     rust_binary(
@@ -32,6 +35,7 @@ def workspace_rust_binary(
         edition = "2024",
         deps = deps + _crate_deps(crate_deps),
         proc_macro_deps = _crate_deps(proc_macro_crate_deps),
+        visibility = visibility,
         **kwargs
     )
 
@@ -39,6 +43,7 @@ def workspace_cargo_build_script(
         crate_deps = [],
         proc_macro_crate_deps = [],
         deps = [],
+    visibility = ["//:workspace_crates"],
         **kwargs):
     """Defines a Cargo build script with explicitly selected Cargo dependencies."""
     cargo_build_script(
@@ -46,5 +51,6 @@ def workspace_cargo_build_script(
         edition = "2024",
         deps = deps + _crate_deps(crate_deps),
         proc_macro_deps = _crate_deps(proc_macro_crate_deps),
+        visibility = visibility,
         **kwargs
     )

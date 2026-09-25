@@ -1,6 +1,6 @@
 load("//bazel:rust_crate.bzl", "workspace_rust_library")
 
-package(default_visibility = ["//visibility:public"])
+package(default_visibility = ["//:workspace_crates"])
 
 exports_files(["Cargo.toml"])
 

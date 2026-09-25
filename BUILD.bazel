@@ -9,6 +9,11 @@ exports_files([
     "rust-toolchain.toml",
 ])
 
+package_group(
+    name = "workspace_crates",
+    packages = ["//..."],
+)
+
 alias(
     name = "opensovd-core",
     actual = "//opensovd-core:opensovd_core",
