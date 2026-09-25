@@ -27,7 +27,7 @@ curl -s http://127.0.0.1:7690/sovd/version-info | jq
 {
   "sovd_info": [
     {
-      "version": "1.1",
+      "version": "1.1.0",
       "base_uri": "http://127.0.0.1:7690/sovd/v1",
       "vendor_info": {
         "version": "0.1.1",
@@ -63,7 +63,7 @@ For testing instructions, see the [Testing guide](docs/testing.md).
 
 The Bazel workspace uses `rules_rust` plus `crate_universe` to build the Rust packages as native Bazel targets. The root package keeps stable entrypoints such as `//:opensovd-core` and `//:opensovd-gateway`, while package-local targets live under their owning directories. Cargo remains the authoritative test workflow.
 
-Use Bazel 8.3.0 directly or through Bazelisk so the workspace stays on the pinned version from `.bazelversion`.
+Use Bazel 8.6.0 directly or through Bazelisk so the workspace stays on the pinned version from `.bazelversion`.
 
 For the Bazel-specific repository notes and instructions for adding new example targets, see [README.bazel.md](README.bazel.md).
 

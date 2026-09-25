@@ -2,6 +2,37 @@
 
 This document describes the GitHub Actions CI/CD pipeline for opensovd.
 
+## Build Environment
+
+The Linux and macOS jobs run inside the [Nix flake](../flake.nix) dev shell
+(`nix develop --command ...`), so CI and local development share one set of tool
+versions. Every in-shell command goes through the `RUN` variable, which holds
+`nix develop --command`. Windows has no Nix port and keeps `setup-rust-toolchain`,
+so the build job overrides `RUN` to empty there and each command still exists once.
+
+`.github/actions/nix-setup` installs Nix and restores the cargo cache. The store
+itself is served by cache.nixos.org; a 3.3 GB closure does not fit the Actions
+cache budget alongside the cargo caches.
+
+Since the store is fetched per job, the flake exposes a second, smaller shell.
+`licenses`, `advisories` and `lint` run static checks only, so they enter
+`.#lint`, which leaves out the tools those jobs never call: 2.3 GB against the
+3.3 GB of the default shell. Each passes `shell: '.#lint'` to `nix-setup`, so the
+step that realises the shell fetches the same one, and overrides `RUN` to
+`nix develop .#lint --command`. The shell carries the whole hook set, so the
+floor is the Rust toolchain the rustfmt and clippy hooks need.
+
+The `.nix` files go through the nixfmt hook, like every other file type. `lint`
+also runs `nix flake check --all-systems`, which evaluates the outputs for every
+system in about a second and builds none of them.
+
+The git hooks are defined in [`nix/git-hooks.nix`](../nix/git-hooks.nix)
+and run through [git-hooks.nix](https://github.com/cachix/git-hooks.nix), which
+generates `.pre-commit-config.yaml` on shell entry. The hooks take their tools
+from the shell, so nothing is fetched per hook. They are kept out of
+`nix flake check`, because the cargo and ty hooks need the crates.io registry
+and a synced virtualenv that the sandbox does not provide.
+
 ## Jobs
 
 | Job            | Runs On                | Description                                                                           |
@@ -9,8 +40,8 @@ This document describes the GitHub Actions CI/CD pipeline for opensovd.
 | **prepare**    | Always                 | Entry point; determines release type and whether to run (skips nightly if no changes) |
 | **build**      | When `should_run=true` | Builds for Linux, Windows, macOS; runs tests and pytest                               |
 | **licenses**   | When `should_run=true` | Checks licenses and sources with cargo-deny                                           |
-| **advisories** | When `should_run=true` | Checks security advisories; uploads SARIF on main/nightly                             |
-| **lint**       | When `should_run=true` | Runs rustfmt, clippy, and pre-commit hooks (prek)                                     |
+| **advisories** | When `should_run=true` | Checks security advisories with cargo-deny                                            |
+| **lint**       | When `should_run=true` | Runs the git hooks (prek), including rustfmt and clippy                               |
 | **coverage**   | When `should_run=true` | Generates coverage report, deploys to GitHub Pages on main                            |
 | **docker**     | main/tags/schedule     | Builds and pushes Docker images (gateway, mcp) to GHCR                                |
 | **release**    | main/tags/schedule     | Creates GitHub release with artifacts and changelog                                   |
