@@ -70,14 +70,11 @@ The repository also includes a Bazel entrypoint backed by `rules_rust` and `crat
 Use Bazel 8.6.0 directly or via Bazelisk so the workspace follows the pinned version in `.bazelversion`.
 
 ```bash
-# Build the full Rust workspace through Bazel
-bazel build //:workspace
-
-# Build a single package
+# Build the gateway through Bazel
 bazel build //:opensovd-gateway
 ```
 
-Current Bazel targets are package-oriented and map to native `rust_library` and `rust_binary` rules under the owning crate directories. Cargo remains the authoritative test workflow.
+The Bazel integration builds the gateway and its transitive internal dependencies. Cargo remains the authoritative test workflow.
 
 When dependency versions change, refresh the generated crate-universe lock metadata with:
 

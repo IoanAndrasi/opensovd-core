@@ -107,25 +107,13 @@ workspace_rust_binary(
 This keeps the Bazel dependency graph explicit and consistent with the Cargo
 manifest instead of exposing every Cargo dependency to every Rust target.
 
-Root Targets
+Gateway Target
 
-The root BUILD.bazel exposes the public aliases for the main workspace crates
-and binaries. Package-local targets are visible only inside this workspace, so
-external consumers should depend on the root aliases rather than their backing
-targets.
+The root BUILD.bazel exposes `//:opensovd-gateway` as the public Bazel target.
+Package-local targets are visible only inside this workspace and support the
+gateway's transitive dependencies.
 
-Examples:
-
-bazel build //:opensovd-core
 bazel build //:opensovd-gateway
-bazel build //:opensovd-mcp
-bazel build //:opensovd-examples-client
-bazel build //:opensovd-examples-server
-bazel build //:opensovd-benches
-
-The complete workspace can be built with:
-
-bazel build //:workspace
 
 All Bazel targets can be inspected with:
 
@@ -133,21 +121,21 @@ bazel query //...
 
 Validated Commands
 
-The following commands are used for full validation:
+The following commands validate the Bazel integration:
 
-bazel build //:workspace
+bazel build //:opensovd-gateway
 bazel query //...
 
 For a clean validation run:
 
 bazel clean --expunge
-bazel build //:workspace
+bazel build //:opensovd-gateway
 bazel query //...
 
 On systems where Bazel's embedded Java runtime does not trust the local
 certificate chain, use the system JDK explicitly, for example:
 
-bazel --server_javabase="$JAVA_HOME" build //:workspace
+bazel --server_javabase="$JAVA_HOME" build //:opensovd-gateway
 bazel --server_javabase="$JAVA_HOME" query //...
 
 This is a local environment workaround and should not be hardcoded into the
@@ -161,32 +149,17 @@ After changing dependencies in a Cargo.toml, update Cargo.lock with Cargo
 as usual and validate the Bazel graph again:
 
 cargo check
-bazel build //:workspace
+bazel build //:opensovd-gateway
 
 Because crate_universe reads the root workspace manifest and Cargo.lock,
 there is no separate Bazel-specific Cargo lockfile to maintain.
 
-Adding New Targets
+Maintaining the Gateway Target
 
-For a new library, binary, example, or build script:
+When gateway code or its transitive dependencies change, update the relevant
+package-local BUILD.bazel targets and validate the gateway target:
 
-Add the source files and update the owning Cargo.toml.
-
-Add a Bazel target in the owning BUILD.bazel.
-
-Use the appropriate wrapper from bazel/rust_crate.bzl.
-
-Declare only the required third-party crates in crate_deps.
-
-Declare proc-macro crates in proc_macro_crate_deps.
-
-Declare internal OpenSOVD targets through normal Bazel deps.
-
-Run the full workspace validation.
-
-Example validation:
-
-bazel build //:workspace
+bazel build //:opensovd-gateway
 bazel query //...
 
 S-CORE Compatibility
