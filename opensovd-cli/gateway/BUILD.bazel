@@ -22,7 +22,6 @@ workspace_rust_binary(
         "base64",
         "clap",
         "http",
-        "rustls",
         "schemars",
         "sd-notify",
         "serde",
@@ -37,6 +36,7 @@ workspace_rust_binary(
     version = "0.1.1",
     deps = [
         ":build_script_build",
+        "@crate_index//:rustls",
         "//opensovd-cli/lib:libcli",
         "//opensovd-core:opensovd_core",
         "//opensovd-extra:opensovd_extra",
