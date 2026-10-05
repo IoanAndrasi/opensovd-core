@@ -40,11 +40,11 @@ mod systemd {
             .base_uri("http://127.0.0.1:0/sovd")?
             .listener(listener)
             .topology(create_mock_topology().await)
-            .layer(libcli::trace::trace_layer())
+            .layer(opensovd_extra::trace::server_layer())
             .build()?;
 
         sd_notify::notify(&[NotifyState::Ready])?;
-        tracing::info!(addr = %addr, "Server running");
+        tracing::info!(target: "systemd", addr = %addr, "Server running");
         server.serve().await?;
         Ok(())
     }

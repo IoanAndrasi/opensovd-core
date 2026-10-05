@@ -125,6 +125,7 @@ dependencies = [
  "tower",
  "tower-layer",
  "tower-service",
+ "tracing",
 ]
 
 [[package]]
@@ -143,6 +144,7 @@ dependencies = [
  "sync_wrapper",
  "tower-layer",
  "tower-service",
+ "tracing",
 ]
 
 [[package]]
@@ -1004,10 +1006,8 @@ name = "libcli"
 version = "0.1.1"
 dependencies = [
  "chrono",
- "http",
  "libc",
  "tokio",
- "tower-http",
  "tracing",
  "tracing-subscriber",
 ]
@@ -1257,17 +1257,12 @@ dependencies = [
 name = "opensovd-examples-client"
 version = "0.1.1"
 dependencies = [
- "bytes",
  "clap",
- "http",
- "http-body-util",
- "hyper",
  "libcli",
  "opensovd-client",
+ "opensovd-extra",
  "serde_json",
  "tokio",
- "tower-http",
- "tracing",
 ]
 
 [[package]]
@@ -1299,8 +1294,12 @@ name = "opensovd-extra"
 version = "0.1.1"
 dependencies = [
  "aws-lc-rs",
+ "axum",
  "base64 0.23.1",
+ "bytes",
  "http",
+ "http-body",
+ "http-body-util",
  "jsonwebtoken",
  "opensovd-server",
  "rand",
@@ -1308,7 +1307,10 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+ "tower",
+ "tower-http",
  "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -1345,6 +1347,7 @@ dependencies = [
  "libcli-build",
  "mock-http-connector",
  "opensovd-client",
+ "opensovd-extra",
  "opensovd-models",
  "rmcp",
  "serde_json",
