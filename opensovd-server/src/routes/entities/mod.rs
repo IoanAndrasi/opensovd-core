@@ -8,11 +8,8 @@
 //! - `GET /components` - List all components
 //! - `GET /components/{component_id}` - Query capabilities of a component
 //! - `GET /components/{component_id}/hosts` - List apps hosted on a component
-//! - `GET /components/{component_id}/belongs-to` - Get areas containing a component
 //! - `GET /apps` - List all apps
 //! - `GET /apps/{app_id}` - Query capabilities of an app
-//! - `GET /apps/{app_id}/is-located-on` - Get the component hosting an app
-//! - `GET /apps/{app_id}/belongs-to` - Get areas containing an app
 //! - `GET /areas` - List all areas
 //! - `GET /areas/{area_id}` - Query capabilities of an area
 //! - `GET /areas/{area_id}/contains` - List entities contained in an area
@@ -74,8 +71,8 @@ async fn root_capabilities(
     }))
 }
 
-/// Characters that must be percent-encoded in URI path segments.
-/// Based on RFC 3986 - encodes everything except unreserved characters.
+/// Characters percent-encoded in a URI path segment: all that RFC 3986 does
+/// not allow there, plus `:` and `@`.
 const PATH_SEGMENT_ENCODE_SET: &AsciiSet = &CONTROLS
     .add(b' ')
     .add(b'"')
@@ -90,10 +87,28 @@ const PATH_SEGMENT_ENCODE_SET: &AsciiSet = &CONTROLS
     .add(b'%')
     .add(b'[')
     .add(b']')
+    .add(b'\\')
+    .add(b'^')
+    .add(b'|')
     .add(b'@')
     .add(b':');
 
 /// Percent-encode a string for use in a URI path segment.
 pub(super) fn encode_path_segment(s: &str) -> String {
     utf8_percent_encode(s, PATH_SEGMENT_ENCODE_SET).to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::encode_path_segment;
+
+    #[test]
+    fn encode_path_segment_keeps_only_path_characters() {
+        assert_eq!(encode_path_segment("a^b|c\\d"), "a%5Eb%7Cc%5Cd");
+        assert_eq!(encode_path_segment("a/b c:d"), "a%2Fb%20c%3Ad");
+        assert_eq!(
+            encode_path_segment("sw.version-1_~!$&'()*+,;="),
+            "sw.version-1_~!$&'()*+,;="
+        );
+    }
 }

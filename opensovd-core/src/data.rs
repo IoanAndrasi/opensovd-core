@@ -39,6 +39,9 @@ pub struct Metadata {
 #[derive(Debug, Clone)]
 pub struct Data {
     pub data: serde_json::Value,
+    /// JSON Schema 2020-12 of `data`, not of the read response. Without its own
+    /// `$id`, the server identifies it per data resource; a provider that sets
+    /// `$id` must keep it unique per schema.
     pub schema: Option<serde_json::Value>,
 }
 
@@ -49,6 +52,10 @@ pub enum DataError {
     NotFound(String),
     #[error("read only")]
     ReadOnly,
+    /// The value does not fit the resource's type. `path` is a JSON
+    /// pointer to the erroneous element within the value.
+    #[error("invalid value at '{path}': {message}")]
+    InvalidValue { path: String, message: String },
     #[error("internal error: {0}")]
     Internal(String),
 }
