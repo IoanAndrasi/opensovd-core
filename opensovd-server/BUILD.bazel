@@ -27,9 +27,9 @@ workspace_rust_library(
         "uuid",
     ],
     crate_features = [
-        "default",
         "http2",
         "json-preserve-order",
+        "jsonschema",
         "tls",
     ],
     crate_name = "opensovd_server",
