@@ -12,6 +12,7 @@ workspace_rust_library(
         "schemars",
         "serde",
         "serde_json",
+        "serde_path_to_error",
         "thiserror",
     ],
     crate_name = "opensovd_providers",
