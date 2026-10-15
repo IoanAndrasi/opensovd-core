@@ -35,6 +35,7 @@ tls = ["opensovd-server/tls", "opensovd-extra/tls"]
 
 [dependencies]
 async-trait = { workspace = true }
+aws-lc-rs = { workspace = true }
 bytes = { workspace = true }
 chrono = { workspace = true }
 futures = { workspace = true, features = ["std", "async-await"] }
@@ -46,6 +47,7 @@ opensovd-mocks = { workspace = true }
 opensovd-models = { workspace = true }
 opensovd-providers = { workspace = true }
 opensovd-server = { workspace = true, default-features = true }
+serde_json = { workspace = true, features = ["std"] }
 sysinfo = { workspace = true }
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["net", "rt-multi-thread", "macros", "fs", "io-util"] }

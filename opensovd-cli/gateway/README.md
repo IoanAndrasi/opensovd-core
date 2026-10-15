@@ -80,6 +80,18 @@ Announces the gateway as `_sovd._tcp` with the `identification` and `accessurl` 
 | `--mdns-host`      | Host label published as `HOST.local` (default: derived from the identification) |
 | `--mdns-interface` | Announce only on these interfaces (comma-separated)           |
 
+### Auth Options
+
+Tokens are verified with the JSON Web Key Set from `--auth-jwks` and must name their key with `kid`; with `--auth-audience`, their `aud` must name one of the audiences. Only RSA keys of 2048 to 8192 bits, P-256, P-384 and Ed25519 keys are used, others are skipped with a warning; a symmetric or private key, two usable keys with the same `kid` or no usable key stops the gateway. Without `--auth-policy`, every valid token is allowed. The policy decides with `data.sovd.authz.allow` on `method` (HEAD reported as GET), `route` (the matched template relative to the mount path, e.g. `/v1/components/{component_id}`), decoded `params` and, for authenticated callers, `principal` (`subject`, `roles`, `scopes`, `claims`). See [the example policy](../../examples/server/auth/sovd_authz.rego).
+
+| Option               | Description                                                                         |
+|----------------------|-------------------------------------------------------------------------------------|
+| `--auth-jwks`        | JSON Web Key Set file with the token signing keys (`SOVD_AUTH_JWKS`)                |
+| `--auth-issuer`      | The `iss` claim tokens must carry; required with `--auth-jwks` (`SOVD_AUTH_ISSUER`) |
+| `--auth-audience`    | Accepted `aud` claim, repeatable or comma-separated (`SOVD_AUTH_AUDIENCE`)          |
+| `--auth-policy`      | Rego policy file, repeatable; requires `--auth-jwks` (`SOVD_AUTH_POLICY`)           |
+| `--auth-policy-data` | JSON data file for the policy, repeatable (`SOVD_AUTH_POLICY_DATA`)                 |
+
 ## Contributing
 
 See [CONTRIBUTING.md](../../CONTRIBUTING.md) for guidelines.
