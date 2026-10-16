@@ -1706,10 +1706,12 @@ version = "0.1.1"
 dependencies = [
  "async-trait",
  "bytes",
+ "chrono",
  "futures",
  "opensovd-core",
  "opensovd-models",
  "opensovd-providers",
+ "tokio",
 ]
 
 [[package]]
@@ -1747,7 +1749,9 @@ dependencies = [
  "axum",
  "axum-extra",
  "bytes",
+ "chrono",
  "futures",
+ "futures-core",
  "http",
  "http-body",
  "http-body-util",

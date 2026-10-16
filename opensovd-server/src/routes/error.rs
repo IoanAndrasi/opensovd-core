@@ -12,7 +12,7 @@ use axum::{
     response::{IntoResponse, Json, Response},
 };
 use axum_extra::{extract::QueryRejection, typed_header::TypedHeaderRejection};
-use opensovd_core::{BulkDataError, DataError, TopologyError};
+use opensovd_core::{BulkDataError, DataError, LogError, TopologyError};
 use opensovd_models::{ErrorCode, ErrorDetails, GenericError, JsonPointer};
 
 /// A `Result` alias where the `Err` variant is [`Error`].
@@ -29,6 +29,8 @@ pub enum Error {
     Data(#[from] DataError),
     #[error(transparent)]
     BulkData(#[from] BulkDataError),
+    #[error(transparent)]
+    Log(#[from] LogError),
     #[error("{0}")]
     BadPath(#[from] PathRejection),
     #[error("{0}")]
@@ -136,8 +138,9 @@ impl IntoResponse for Error {
                 .into(),
             ),
             Self::Data(e) => match e {
-                DataError::NotFound(_) => (
+                DataError::NotFound(_) => provider_error(
                     StatusCode::NOT_FOUND,
+                    e,
                     GenericError::with_vendor_code("resource-not-found", e.to_string()).into(),
                 ),
                 DataError::ReadOnly => {
@@ -156,22 +159,29 @@ impl IntoResponse for Error {
                     )
                         .into_response();
                 }
-                DataError::InvalidValue { path, message } => (
+                DataError::InvalidValue { path, message } => provider_error(
                     StatusCode::BAD_REQUEST,
+                    e,
                     data_error(format!("/data{path}"), message),
                 ),
-                DataError::Internal(message) => {
-                    (StatusCode::INTERNAL_SERVER_ERROR, internal(message).into())
-                }
+                DataError::Internal(message) => provider_error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    e,
+                    internal(message).into(),
+                ),
             },
             Self::BulkData(e) => {
                 let (status, error) = bulk_data_error(e);
-                (status, error.into())
+                provider_error(status, e, error.into())
             }
             Self::BadPath(rejection) => (
                 StatusCode::BAD_REQUEST,
                 GenericError::new(ErrorCode::IncompleteRequest, bad_path(rejection)).into(),
             ),
+            Self::Log(e) => {
+                let (status, error) = log_error(e);
+                provider_error(status, e, error.into())
+            }
             Self::BadQuery(_) => (
                 StatusCode::BAD_REQUEST,
                 GenericError::new(ErrorCode::IncompleteRequest, "Bad request").into(),
@@ -193,6 +203,42 @@ impl IntoResponse for Error {
             }
         };
         (status, Json(details)).into_response()
+    }
+}
+
+/// The status and body answering a log-provider error before common handling.
+fn log_error(e: &LogError) -> (StatusCode, GenericError) {
+    match e {
+        LogError::InvalidRequest(_) => (
+            StatusCode::BAD_REQUEST,
+            GenericError::new(ErrorCode::IncompleteRequest, e.to_string()),
+        ),
+        LogError::NotFound(_) => (
+            StatusCode::NOT_FOUND,
+            GenericError::with_vendor_code("resource-not-found", e.to_string()),
+        ),
+        LogError::NotSupported(_) => (
+            StatusCode::NOT_IMPLEMENTED,
+            GenericError::new(ErrorCode::ErrorResponse, e.to_string()),
+        ),
+        LogError::Internal(message) => (StatusCode::INTERNAL_SERVER_ERROR, internal(message)),
+    }
+}
+
+/// A provider error as an `error-response`; a 500 logs the details and hides them.
+fn provider_error(
+    status: StatusCode,
+    error: &impl std::fmt::Display,
+    details: ErrorDetails,
+) -> (StatusCode, ErrorDetails) {
+    if status == StatusCode::INTERNAL_SERVER_ERROR {
+        tracing::error!(target: "srv", error = %error, "Internal error");
+        (
+            status,
+            GenericError::new(ErrorCode::SovdServerFailure, "An internal error occurred").into(),
+        )
+    } else {
+        (status, details)
     }
 }
 

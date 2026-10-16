@@ -32,6 +32,7 @@ mod bulkdata;
 mod data;
 mod entities;
 mod error;
+mod log;
 mod version;
 
 use axum::{
@@ -120,7 +121,8 @@ where
     let v1_routes = Router::new()
         .merge(entities::routes::<V>())
         .merge(bulkdata::routes::<V>())
-        .merge(data::routes::<V>());
+        .merge(data::routes::<V>())
+        .merge(log::routes::<V>());
 
     let router = Router::new()
         .nest(&format!("/{API_VERSION}"), v1_routes)
@@ -174,6 +176,12 @@ mod tests {
             ("DELETE", "/v1/components/%FF/bulk-data/c"),
             ("GET", "/v1/components/%FF/bulk-data/c/x"),
             ("DELETE", "/v1/components/%FF/bulk-data/c/x"),
+            ("GET", "/v1/apps/%FF/logs"),
+            ("GET", "/v1/apps/%FF/logs/entries"),
+            ("GET", "/v1/apps/%FF/logs/x-opensovd-log-streams"),
+            ("GET", "/v1/apps/%FF/logs/config"),
+            ("PUT", "/v1/apps/%FF/logs/config"),
+            ("DELETE", "/v1/apps/%FF/logs/config"),
         ] {
             let request = Request::builder()
                 .method(method)
