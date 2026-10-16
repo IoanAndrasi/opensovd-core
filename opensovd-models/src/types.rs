@@ -23,6 +23,8 @@ impl From<String> for JsonPointer {
     }
 }
 
+pub type DateTime = chrono::DateTime<chrono::Utc>;
+
 impl From<&serde_path_to_error::Error<serde_json::Error>> for JsonPointer {
     /// Points at the element where deserialization failed, or at the field
     /// itself if it is missing.
@@ -53,21 +55,11 @@ impl From<&serde_path_to_error::Error<serde_json::Error>> for JsonPointer {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct SupportedTags(pub Vec<String>);
-
-impl From<Vec<String>> for SupportedTags {
-    fn from(v: Vec<String>) -> Self {
-        Self(v)
-    }
-}
-
 #[cfg(feature = "jsonschema")]
 mod schema {
     use schemars::{JsonSchema, Schema, SchemaGenerator};
 
-    use super::{JsonPointer, SupportedTags, UriReference};
+    use super::{JsonPointer, UriReference};
 
     impl JsonSchema for UriReference {
         fn schema_name() -> std::borrow::Cow<'static, str> {
@@ -91,21 +83,6 @@ mod schema {
             schemars::json_schema!({
                 "type": "string",
                 "format": "json-pointer"
-            })
-        }
-    }
-
-    impl JsonSchema for SupportedTags {
-        fn schema_name() -> std::borrow::Cow<'static, str> {
-            "SupportedTags".into()
-        }
-
-        fn json_schema(_gen: &mut SchemaGenerator) -> Schema {
-            schemars::json_schema!({
-                "type": "array",
-                "items": {
-                    "type": "string"
-                }
             })
         }
     }

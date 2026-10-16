@@ -6,10 +6,9 @@
 
 //! SOVD logging API models.
 
-use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use crate::{UriReference, error::GenericError};
+use crate::{Collection, DateTime, UriReference, error::GenericError};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "jsonschema", derive(schemars::JsonSchema))]
@@ -34,7 +33,7 @@ pub struct LogContext {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "jsonschema", derive(schemars::JsonSchema))]
 pub struct LogEntry {
-    pub timestamp: DateTime<Utc>,
+    pub timestamp: DateTime,
     pub context: LogContext,
     pub severity: LogSeverity,
     pub msg: String,
@@ -52,23 +51,22 @@ pub struct LogResources {
         skip_serializing_if = "Option::is_none"
     )]
     pub stream: Option<UriReference>,
+    /// Schema of the response, sent for `include-schema=true`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub schema: Option<serde_json::Value>,
 }
 
 /// Event envelope used by the OpenSOVD live-log SSE extension.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "jsonschema", derive(schemars::JsonSchema))]
 pub struct EventEnvelope<T> {
-    pub timestamp: DateTime<Utc>,
+    pub timestamp: DateTime,
     pub payload: Option<T>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<GenericError>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "jsonschema", derive(schemars::JsonSchema))]
-pub struct LogEntries {
-    pub items: Vec<LogEntry>,
-}
+pub type LogEntries = Collection<LogEntry>;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "jsonschema", derive(schemars::JsonSchema))]
@@ -87,15 +85,18 @@ pub struct LogConfigurationRequest {
 #[cfg_attr(feature = "jsonschema", derive(schemars::JsonSchema))]
 pub struct LogConfigurationResponse {
     pub contexts: Vec<LogConfiguration>,
+    /// Schema of the response, sent for `include-schema=true`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub schema: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct LogEntriesQuery {
     pub severity: Option<LogSeverity>,
     #[serde(rename = "created-after")]
-    pub created_after: Option<DateTime<Utc>>,
+    pub created_after: Option<DateTime>,
     #[serde(rename = "created-before")]
-    pub created_before: Option<DateTime<Utc>>,
+    pub created_before: Option<DateTime>,
     #[serde(default, rename = "include-schema")]
     pub include_schema: bool,
 }
@@ -114,14 +115,14 @@ pub type LogConfigurationQuery = LogResourcesQuery;
 pub struct LogStreamQuery {
     pub severity: Option<LogSeverity>,
     #[serde(rename = "created-after")]
-    pub created_after: Option<DateTime<Utc>>,
+    pub created_after: Option<DateTime>,
     #[serde(rename = "created-before")]
-    pub created_before: Option<DateTime<Utc>>,
+    pub created_before: Option<DateTime>,
 }
 
 #[cfg(test)]
 mod tests {
-    use chrono::TimeZone;
+    use chrono::{TimeZone, Utc};
     use serde_json::json;
 
     use super::*;
@@ -173,6 +174,7 @@ mod tests {
                     .to_string()
                     .into(),
             ),
+            schema: None,
         };
 
         let value = serde_json::to_value(resources).unwrap();

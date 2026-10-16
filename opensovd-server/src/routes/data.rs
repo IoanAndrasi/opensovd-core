@@ -24,17 +24,15 @@ use axum::{
 };
 use axum_extra::extract::{Query, WithRejection};
 use opensovd_core::{DataFilter, DataScope, Topology};
-use opensovd_models::Response;
 use opensovd_models::data::{
     DataCategories, DataCategoryInformation, DataGroups, DataGroupsQuery, DataList, DataQuery,
     Group, Metadata, ReadDataQuery, ReadResponse, WriteRequest,
 };
-use serde_json::{Map, Value};
+use serde_json::Value;
 
 use super::AppState;
-use super::entities::encode_path_segment;
 use super::error::{Error, Result};
-use crate::schema::JsonSchema;
+use crate::schema::{JsonSchema, normalize};
 
 pub fn routes<V>() -> Router<AppState<V>>
 where
@@ -70,7 +68,7 @@ async fn component_data_categories(
     State(topology): State<Topology>,
     OriginalUri(uri): OriginalUri,
     WithRejection(Path(component_id), _): WithRejection<Path<String>, Error>,
-) -> Result<Json<Response<DataCategories>>> {
+) -> Result<Json<DataCategories>> {
     let topo = topology.read().await;
     let entity = topo
         .get_component(&component_id)
@@ -89,8 +87,8 @@ async fn component_data_categories(
         })
         .collect();
 
-    Ok(Json(Response {
-        data: DataCategories { items },
+    Ok(Json(DataCategories {
+        items,
         schema: None,
     }))
 }
@@ -103,7 +101,7 @@ async fn component_data_groups(
     OriginalUri(uri): OriginalUri,
     WithRejection(Path(component_id), _): WithRejection<Path<String>, Error>,
     WithRejection(Query(query), _): WithRejection<Query<DataGroupsQuery>, Error>,
-) -> Result<Json<Response<DataGroups>>> {
+) -> Result<Json<DataGroups>> {
     let topo = topology.read().await;
     let entity = topo
         .get_component(&component_id)
@@ -129,8 +127,8 @@ async fn component_data_groups(
         })
         .collect();
 
-    Ok(Json(Response {
-        data: DataGroups { items },
+    Ok(Json(DataGroups {
+        items,
         schema: None,
     }))
 }
@@ -157,50 +155,19 @@ fn data_filter(query: DataQuery) -> DataFilter {
     }
 }
 
-/// `$id` of the schema of a data resource, unique per entity and data id.
-fn data_schema_id(collection: &str, entity_id: &str, data_id: &str) -> String {
-    format!(
-        "urn:opensovd:{collection}/{}/data/{}",
-        encode_path_segment(entity_id),
-        encode_path_segment(data_id)
-    )
-}
-
 /// Schema of a read response, with the data value schema in place of `data`.
-///
-/// The data schema keeps its own `$id` or gets `id`, so its references keep
-/// resolving against itself.
-fn read_response_schema(id: &str, mut data: Value) -> Value {
-    if let Some(object) = data.as_object_mut() {
-        let mut rest = std::mem::take(object);
-        let own_id = rest.remove("$id").filter(Value::is_string);
-        object.insert("$id".into(), own_id.unwrap_or_else(|| id.into()));
-        // ajv recurses forever on a `$ref` next to the `$id` of a subschema;
-        // `allOf` applies it the same way.
-        if let Some(reference) = rest.remove("$ref") {
-            let reference = serde_json::json!({ "$ref": reference });
-            match rest.get_mut("allOf") {
-                Some(Value::Array(all_of)) => all_of.push(reference),
-                _ => {
-                    rest.insert("allOf".into(), Value::Array(vec![reference]));
-                }
-            }
-        }
-        object.extend(rest);
+fn read_response_schema(data: Value) -> Value {
+    let mut schema = ReadResponse::schema();
+    // Without `jsonschema`, the response schema has no properties.
+    if let Some(properties) = schema.as_object_mut().and_then(|object| {
+        object
+            .entry("properties")
+            .or_insert_with(|| serde_json::json!({}))
+            .as_object_mut()
+    }) {
+        properties.insert("data".into(), normalize(data));
     }
-
-    let mut schema = match ReadResponse::schema() {
-        Value::Object(schema) => schema,
-        _ => Map::new(),
-    };
-    if let Some(properties) = schema
-        .entry("properties")
-        .or_insert_with(|| Value::Object(Map::new()))
-        .as_object_mut()
-    {
-        properties.insert("data".into(), data);
-    }
-    schema.into()
+    schema
 }
 
 /// GET /components/{component_id}/data - List data resources.
@@ -212,7 +179,7 @@ async fn component_data_list(
     OriginalUri(uri): OriginalUri,
     WithRejection(Path(component_id), _): WithRejection<Path<String>, Error>,
     WithRejection(Query(query), _): WithRejection<Query<DataQuery>, Error>,
-) -> Result<Json<Response<DataList>>> {
+) -> Result<Json<DataList>> {
     let topo = topology.read().await;
     let entity = topo
         .get_component(&component_id)
@@ -238,8 +205,8 @@ async fn component_data_list(
         })
         .collect();
 
-    Ok(Json(Response {
-        data: DataList { items },
+    Ok(Json(DataList {
+        items,
         schema: include_schema.then(DataList::schema),
     }))
 }
@@ -262,12 +229,9 @@ async fn component_data_read(
         .ok_or_else(|| Error::ResourceNotFound(uri.path().to_owned()))?;
 
     let value = provider.data_read(&data_id, query.include_schema).await?;
-    let schema = query.include_schema.then(|| {
-        read_response_schema(
-            &data_schema_id("components", &component_id, &data_id),
-            value.schema.unwrap_or(Value::Bool(true)),
-        )
-    });
+    let schema = query
+        .include_schema
+        .then(|| read_response_schema(value.schema.unwrap_or(Value::Bool(true))));
 
     Ok(Json(ReadResponse {
         id: data_id,
@@ -305,7 +269,7 @@ async fn app_data_categories(
     State(topology): State<Topology>,
     OriginalUri(uri): OriginalUri,
     WithRejection(Path(app_id), _): WithRejection<Path<String>, Error>,
-) -> Result<Json<Response<DataCategories>>> {
+) -> Result<Json<DataCategories>> {
     let topo = topology.read().await;
     let entity = topo
         .get_app(&app_id)
@@ -324,8 +288,8 @@ async fn app_data_categories(
         })
         .collect();
 
-    Ok(Json(Response {
-        data: DataCategories { items },
+    Ok(Json(DataCategories {
+        items,
         schema: None,
     }))
 }
@@ -338,7 +302,7 @@ async fn app_data_groups(
     OriginalUri(uri): OriginalUri,
     WithRejection(Path(app_id), _): WithRejection<Path<String>, Error>,
     WithRejection(Query(query), _): WithRejection<Query<DataGroupsQuery>, Error>,
-) -> Result<Json<Response<DataGroups>>> {
+) -> Result<Json<DataGroups>> {
     let topo = topology.read().await;
     let entity = topo
         .get_app(&app_id)
@@ -364,8 +328,8 @@ async fn app_data_groups(
         })
         .collect();
 
-    Ok(Json(Response {
-        data: DataGroups { items },
+    Ok(Json(DataGroups {
+        items,
         schema: None,
     }))
 }
@@ -379,7 +343,7 @@ async fn app_data_list(
     OriginalUri(uri): OriginalUri,
     WithRejection(Path(app_id), _): WithRejection<Path<String>, Error>,
     WithRejection(Query(query), _): WithRejection<Query<DataQuery>, Error>,
-) -> Result<Json<Response<DataList>>> {
+) -> Result<Json<DataList>> {
     let topo = topology.read().await;
     let entity = topo
         .get_app(&app_id)
@@ -405,8 +369,8 @@ async fn app_data_list(
         })
         .collect();
 
-    Ok(Json(Response {
-        data: DataList { items },
+    Ok(Json(DataList {
+        items,
         schema: include_schema.then(DataList::schema),
     }))
 }
@@ -429,12 +393,9 @@ async fn app_data_read(
         .ok_or_else(|| Error::ResourceNotFound(uri.path().to_owned()))?;
 
     let value = provider.data_read(&data_id, query.include_schema).await?;
-    let schema = query.include_schema.then(|| {
-        read_response_schema(
-            &data_schema_id("apps", &app_id, &data_id),
-            value.schema.unwrap_or(Value::Bool(true)),
-        )
-    });
+    let schema = query
+        .include_schema
+        .then(|| read_response_schema(value.schema.unwrap_or(Value::Bool(true))));
 
     Ok(Json(ReadResponse {
         id: data_id,
@@ -491,106 +452,21 @@ mod tests {
         assert_eq!(filter.tags, vec!["t"]);
     }
 
-    const ID: &str = "urn:opensovd:components/climate/data/level";
-
-    #[test]
-    fn data_schema_id_encodes_ids() {
-        assert_eq!(
-            data_schema_id("apps", "radio 1", "station/name"),
-            "urn:opensovd:apps/radio%201/data/station%2Fname"
-        );
-    }
-
     #[cfg(feature = "jsonschema")]
     #[test]
-    fn read_response_schema_embeds_data_schema_as_resource() {
-        let data = serde_json::json!({
+    fn read_response_schema_puts_value_schema_in_place_of_data() {
+        let schema = read_response_schema(serde_json::json!({
             "$schema": "https://json-schema.org/draft/2020-12/schema",
-            "type": "object",
-            "properties": {
-                "error": { "$ref": "#/$defs/GenericError" },
-                "next": { "$ref": "#" },
-            },
-            "$defs": { "GenericError": { "type": "integer" } },
-        });
-        let schema = read_response_schema(ID, data.clone());
-        let mut embedded = schema.pointer("/properties/data").cloned().unwrap();
+            "title": "Level",
+            "type": "integer",
+        }));
         assert_eq!(
-            embedded
-                .as_object_mut()
-                .and_then(|object| object.remove("$id")),
-            Some(ID.into())
+            schema.pointer("/properties/data"),
+            Some(&serde_json::json!({ "type": "integer" }))
         );
-        assert_eq!(embedded, data);
         assert_eq!(
             schema.pointer("/properties/id"),
             Some(&serde_json::json!({ "type": "string" }))
-        );
-        assert_eq!(
-            schema.pointer("/$defs/GenericError"),
-            ReadResponse::schema().pointer("/$defs/GenericError")
-        );
-    }
-
-    #[test]
-    fn read_response_schema_keeps_data_schema_with_id() {
-        let data = serde_json::json!({
-            "$schema": "https://json-schema.org/draft/2020-12/schema",
-            "$id": "urn:example:level",
-            "properties": { "level": { "$ref": "#/$defs/Level" } },
-            "$defs": { "Level": { "type": "integer" } },
-        });
-        let schema = read_response_schema(ID, data.clone());
-        assert_eq!(schema.pointer("/properties/data"), Some(&data));
-    }
-
-    #[test]
-    fn read_response_schema_moves_root_ref_into_all_of() {
-        let schema = read_response_schema(
-            ID,
-            serde_json::json!({
-                "$ref": "#/$defs/Level",
-                "allOf": [{ "minimum": 1 }],
-                "$defs": { "Level": { "type": "integer" } },
-            }),
-        );
-        assert_eq!(
-            schema.pointer("/properties/data"),
-            Some(&serde_json::json!({
-                "$id": ID,
-                "allOf": [{ "minimum": 1 }, { "$ref": "#/$defs/Level" }],
-                "$defs": { "Level": { "type": "integer" } },
-            }))
-        );
-    }
-
-    #[test]
-    fn read_response_schema_moves_root_ref_next_to_own_id() {
-        let schema = read_response_schema(
-            ID,
-            serde_json::json!({
-                "$id": "urn:example:level",
-                "$ref": "#/$defs/Level",
-                "$defs": { "Level": { "type": "integer" } },
-            }),
-        );
-        assert_eq!(
-            schema.pointer("/properties/data"),
-            Some(&serde_json::json!({
-                "$id": "urn:example:level",
-                "allOf": [{ "$ref": "#/$defs/Level" }],
-                "$defs": { "Level": { "type": "integer" } },
-            }))
-        );
-    }
-
-    #[test]
-    fn read_response_schema_replaces_non_string_id() {
-        let schema =
-            read_response_schema(ID, serde_json::json!({ "$id": null, "type": "integer" }));
-        assert_eq!(
-            schema.pointer("/properties/data"),
-            Some(&serde_json::json!({ "$id": ID, "type": "integer" }))
         );
     }
 }

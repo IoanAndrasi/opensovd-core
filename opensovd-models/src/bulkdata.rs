@@ -1,10 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 Contributors to the Eclipse Foundation
 // SPDX-License-Identifier: Apache-2.0
 
-use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use crate::{GenericError, types::SupportedTags};
+use crate::{Collection, DateTime, GenericError};
 
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, rename_all = "kebab-case")]
@@ -16,8 +15,8 @@ pub struct BulkDataCategoriesQuery {
 #[serde(default, rename_all = "kebab-case")]
 pub struct BulkDataDescriptorsQuery {
     pub include_schema: bool,
-    pub created_before: Option<DateTime<Utc>>,
-    pub created_after: Option<DateTime<Utc>>,
+    pub created_before: Option<DateTime>,
+    pub created_after: Option<DateTime>,
     pub tags: Option<Vec<String>>,
 }
 
@@ -37,28 +36,20 @@ pub struct BulkDataDescriptor {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub size: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub creation_date: Option<DateTime<Utc>>,
+    pub creation_date: Option<DateTime>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub last_modified: Option<DateTime<Utc>>,
+    pub last_modified: Option<DateTime>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub hash: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub hash_algorithm: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub tags: Option<SupportedTags>,
+    pub tags: Option<Vec<String>>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "jsonschema", derive(schemars::JsonSchema))]
-pub struct AvailableBulkDataCategories {
-    pub items: Vec<BulkDataCategory>,
-}
+pub type AvailableBulkDataCategories = Collection<BulkDataCategory>;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "jsonschema", derive(schemars::JsonSchema))]
-pub struct BulkDataMetadata {
-    pub items: Vec<BulkDataDescriptor>,
-}
+pub type BulkDataMetadata = Collection<BulkDataDescriptor>;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "jsonschema", derive(schemars::JsonSchema))]
@@ -116,11 +107,11 @@ mod tests {
             name: Some("picture.png".into()),
             translation_id: Some("t.id.1".into()),
             size: Some(1024),
-            creation_date: Some("2026-01-01T00:00:00Z".parse::<DateTime<Utc>>().unwrap()),
-            last_modified: Some("2026-06-01T00:00:00Z".parse::<DateTime<Utc>>().unwrap()),
+            creation_date: Some("2026-01-01T00:00:00Z".parse::<DateTime>().unwrap()),
+            last_modified: Some("2026-06-01T00:00:00Z".parse::<DateTime>().unwrap()),
             hash: Some("abc123".into()),
             hash_algorithm: Some("sha256".into()),
-            tags: Some(SupportedTags(vec!["sensor".into(), "camera".into()])),
+            tags: Some(vec!["sensor".into(), "camera".into()]),
         };
         let json = serde_json::to_value(&desc).unwrap();
         assert_eq!(json["id"], "file2");
@@ -163,13 +154,19 @@ mod tests {
 
     #[test]
     fn bulk_data_metadata_and_categories_empty_items() {
-        let metadata = BulkDataMetadata { items: vec![] };
+        let metadata = BulkDataMetadata {
+            items: vec![],
+            schema: None,
+        };
         let json = serde_json::to_value(&metadata).unwrap();
-        assert_eq!(json["items"], serde_json::json!([]));
+        assert_eq!(json, serde_json::json!({ "items": [] }));
 
-        let categories = AvailableBulkDataCategories { items: vec![] };
+        let categories = AvailableBulkDataCategories {
+            items: vec![],
+            schema: None,
+        };
         let json = serde_json::to_value(&categories).unwrap();
-        assert_eq!(json["items"], serde_json::json!([]));
+        assert_eq!(json, serde_json::json!({ "items": [] }));
     }
 
     #[test]
@@ -200,11 +197,11 @@ mod tests {
         assert!(query.include_schema);
         assert_eq!(
             query.created_before,
-            Some("2026-01-01T00:00:00Z".parse::<DateTime<Utc>>().unwrap())
+            Some("2026-01-01T00:00:00Z".parse::<DateTime>().unwrap())
         );
         assert_eq!(
             query.created_after,
-            Some("2025-01-01T00:00:00Z".parse::<DateTime<Utc>>().unwrap())
+            Some("2025-01-01T00:00:00Z".parse::<DateTime>().unwrap())
         );
         assert_eq!(
             query.tags.as_deref(),
