@@ -1,8 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 Contributors to the Eclipse Foundation
 // SPDX-License-Identifier: Apache-2.0
 
-#![cfg_attr(all(test, coverage_nightly), feature(coverage_attribute))]
-
 #[cfg(feature = "unit")]
 mod unit;
 
@@ -13,7 +11,7 @@ pub use unit::{PhysicalDimension, Unit};
 pub mod auth;
 
 #[cfg(feature = "auth")]
-pub use auth::{JwtAlgorithm, JwtAuthenticator, RegorusAuthorizer};
+pub use auth::{JwtAuthenticator, RegorusAuthorizer};
 
 #[cfg(feature = "tls")]
 pub mod tls;
@@ -23,3 +21,9 @@ pub use tls::{ClientAuth, ServerTlsConfig, TlsError};
 
 #[cfg(feature = "trace")]
 pub mod trace;
+
+#[cfg(feature = "mdns")]
+pub mod mdns;
+
+#[cfg(feature = "mdns")]
+pub use mdns::{Announcement, MdnsAnnouncer, MdnsError};

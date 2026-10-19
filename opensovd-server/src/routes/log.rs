@@ -1,0 +1,338 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 Contributors to the Eclipse Foundation
+// SPDX-License-Identifier: Apache-2.0
+//
+// AI Disclosure: This file was created with the assistance of OpenAI Codex.
+// Assisted-by: OpenAI Codex
+
+//! SOVD logging resource endpoints.
+
+use axum::{
+    Json, Router,
+    extract::{Path, State},
+    response::sse::{Event, KeepAlive, Sse},
+    routing::get,
+};
+use axum_extra::extract::{Query, WithRejection};
+use futures::StreamExt;
+use http::{StatusCode, request::Parts};
+use opensovd_core::{
+    LogConfiguration as CoreLogConfiguration, LogContext as CoreLogContext,
+    LogEntry as CoreLogEntry, LogError, LogFilter, LogProvider, LogSeverity as CoreLogSeverity,
+    Topology,
+};
+use opensovd_models::{
+    error::{ErrorCode, GenericError},
+    log::{
+        EventEnvelope, LogConfiguration, LogConfigurationQuery, LogConfigurationRequest,
+        LogConfigurationResponse, LogContext, LogEntries, LogEntriesQuery, LogEntry, LogResources,
+        LogResourcesQuery, LogSeverity, LogStreamQuery,
+    },
+};
+
+use super::{
+    AppState,
+    entities::encode_path_segment,
+    error::{Error, Result},
+    versioned_uri,
+};
+use crate::schema::JsonSchema;
+
+pub fn routes<V>() -> Router<AppState<V>>
+where
+    V: Clone + Send + Sync + 'static,
+{
+    Router::new()
+        .route("/{entity_collection}/{entity_id}/logs", get(log_resources))
+        .route(
+            "/{entity_collection}/{entity_id}/logs/entries",
+            get(log_entries),
+        )
+        .route(
+            "/{entity_collection}/{entity_id}/logs/x-opensovd-log-streams",
+            get(log_entry_stream),
+        )
+        .route(
+            "/{entity_collection}/{entity_id}/logs/config",
+            get(log_configuration)
+                .put(update_log_configuration)
+                .delete(reset_log_configuration),
+        )
+}
+
+async fn log_resources(
+    State(topology): State<Topology>,
+    WithRejection(Path((entity_collection, entity_id)), _): WithRejection<
+        Path<(String, String)>,
+        Error,
+    >,
+    WithRejection(Query(query), _): WithRejection<Query<LogResourcesQuery>, Error>,
+    parts: Parts,
+) -> Result<Json<LogResources>> {
+    let provider = get_provider(&topology, &entity_collection, &entity_id).await?;
+    let base = versioned_uri(&parts);
+    let stream = provider.supports_streaming().then(|| {
+        format!(
+            "{base}/{entity_collection}/{}/logs/x-opensovd-log-streams",
+            encode_path_segment(&entity_id)
+        )
+        .into()
+    });
+    Ok(Json(LogResources {
+        entries: format!(
+            "{base}/{entity_collection}/{}/logs/entries",
+            encode_path_segment(&entity_id)
+        )
+        .into(),
+        config: format!(
+            "{base}/{entity_collection}/{}/logs/config",
+            encode_path_segment(&entity_id)
+        )
+        .into(),
+        stream,
+        schema: query.include_schema.then(LogResources::schema),
+    }))
+}
+
+async fn log_entries(
+    State(topology): State<Topology>,
+    WithRejection(Path((entity_collection, entity_id)), _): WithRejection<
+        Path<(String, String)>,
+        Error,
+    >,
+    WithRejection(Query(query), _): WithRejection<Query<LogEntriesQuery>, Error>,
+) -> Result<Json<LogEntries>> {
+    validate_entries_filter(&query)?;
+    let provider = get_provider(&topology, &entity_collection, &entity_id).await?;
+    let include_schema = query.include_schema;
+    let entries = provider
+        .entries(LogFilter {
+            severity: query.severity.map(core_severity),
+            created_after: query.created_after,
+            created_before: query.created_before,
+        })
+        .await?
+        .into_iter()
+        .map(model_entry)
+        .collect();
+
+    Ok(Json(LogEntries {
+        items: entries,
+        schema: include_schema.then(LogEntries::schema),
+    }))
+}
+
+async fn log_entry_stream(
+    State(topology): State<Topology>,
+    WithRejection(Path((entity_collection, entity_id)), _): WithRejection<
+        Path<(String, String)>,
+        Error,
+    >,
+    WithRejection(Query(query), _): WithRejection<Query<LogStreamQuery>, Error>,
+) -> Result<
+    Sse<impl futures_core::Stream<Item = std::result::Result<Event, std::convert::Infallible>>>,
+> {
+    validate_stream_filter(&query)?;
+    let provider = get_provider(&topology, &entity_collection, &entity_id).await?;
+    let stream = provider
+        .stream(LogFilter {
+            severity: query.severity.map(core_severity),
+            created_after: query.created_after,
+            created_before: query.created_before,
+        })
+        .await?;
+
+    let events = stream.map(|item| {
+        let envelope = match item {
+            Ok(entry) => EventEnvelope {
+                timestamp: entry.timestamp,
+                payload: Some(model_entry(entry)),
+                error: None,
+            },
+            Err(error) => EventEnvelope {
+                // Provider errors do not carry an entry timestamp. The epoch
+                // makes that absence deterministic and keeps the envelope valid.
+                timestamp: chrono::DateTime::<chrono::Utc>::UNIX_EPOCH,
+                payload: None,
+                error: Some(stream_error(&error)),
+            },
+        };
+        Ok(Event::default().data(
+            serde_json::to_string(&envelope).unwrap_or_else(|_| {
+                "{\"error\":{\"message\":\"failed to encode log event\"}}".into()
+            }),
+        ))
+    });
+
+    Ok(Sse::new(events).keep_alive(KeepAlive::default()))
+}
+
+fn stream_error(error: &LogError) -> GenericError {
+    let (error_code, message) = match error {
+        LogError::InvalidRequest(_) => (
+            ErrorCode::ErrorResponse,
+            "the log provider rejected a stream item",
+        ),
+        LogError::NotFound(_) => (
+            ErrorCode::ErrorResponse,
+            "the log stream resource was not found",
+        ),
+        LogError::NotSupported(_) => (
+            ErrorCode::ErrorResponse,
+            "the log provider does not support live streaming",
+        ),
+        LogError::Internal(_) => (
+            ErrorCode::SovdServerFailure,
+            "the log provider failed to produce a stream item",
+        ),
+    };
+    GenericError::new(error_code, message)
+}
+
+async fn log_configuration(
+    State(topology): State<Topology>,
+    WithRejection(Path((entity_collection, entity_id)), _): WithRejection<
+        Path<(String, String)>,
+        Error,
+    >,
+    WithRejection(Query(query), _): WithRejection<Query<LogConfigurationQuery>, Error>,
+) -> Result<Json<LogConfigurationResponse>> {
+    let provider = get_provider(&topology, &entity_collection, &entity_id).await?;
+    let contexts = provider
+        .configuration()
+        .await?
+        .into_iter()
+        .map(model_configuration)
+        .collect();
+    Ok(Json(LogConfigurationResponse {
+        contexts,
+        schema: query.include_schema.then(LogConfigurationResponse::schema),
+    }))
+}
+
+async fn update_log_configuration(
+    State(topology): State<Topology>,
+    WithRejection(Path((entity_collection, entity_id)), _): WithRejection<
+        Path<(String, String)>,
+        Error,
+    >,
+    WithRejection(Json(body), _): WithRejection<Json<LogConfigurationRequest>, Error>,
+) -> Result<StatusCode> {
+    let provider = get_provider(&topology, &entity_collection, &entity_id).await?;
+    provider
+        .configure(body.items.into_iter().map(core_configuration).collect())
+        .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn reset_log_configuration(
+    State(topology): State<Topology>,
+    WithRejection(Path((entity_collection, entity_id)), _): WithRejection<
+        Path<(String, String)>,
+        Error,
+    >,
+) -> Result<StatusCode> {
+    let provider = get_provider(&topology, &entity_collection, &entity_id).await?;
+    provider.reset_configuration().await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn get_provider(
+    topology: &Topology,
+    entity_collection: &str,
+    entity_id: &str,
+) -> Result<std::sync::Arc<dyn LogProvider>> {
+    let topo = topology.read().await;
+    let provider = match entity_collection {
+        "apps" => topo
+            .get_app(entity_id)
+            .map_err(|_| Error::EntityNotFound(entity_id.to_string()))?
+            .log_provider(),
+        "components" => topo
+            .get_component(entity_id)
+            .map_err(|_| Error::EntityNotFound(entity_id.to_string()))?
+            .log_provider(),
+        _ => return Err(Error::EntityNotFound(entity_collection.to_string())),
+    };
+    provider.ok_or_else(|| LogError::NotSupported("logs resource is not supported".into()).into())
+}
+
+fn core_severity(value: LogSeverity) -> CoreLogSeverity {
+    match value {
+        LogSeverity::Fatal => CoreLogSeverity::Fatal,
+        LogSeverity::Error => CoreLogSeverity::Error,
+        LogSeverity::Warn => CoreLogSeverity::Warn,
+        LogSeverity::Info => CoreLogSeverity::Info,
+        LogSeverity::Debug => CoreLogSeverity::Debug,
+    }
+}
+
+fn model_severity(value: CoreLogSeverity) -> LogSeverity {
+    match value {
+        CoreLogSeverity::Fatal => LogSeverity::Fatal,
+        CoreLogSeverity::Error => LogSeverity::Error,
+        CoreLogSeverity::Warn => LogSeverity::Warn,
+        CoreLogSeverity::Info => LogSeverity::Info,
+        CoreLogSeverity::Debug => LogSeverity::Debug,
+    }
+}
+
+fn core_context(value: LogContext) -> CoreLogContext {
+    CoreLogContext {
+        context_type: value.context_type,
+        attributes: value.attributes,
+    }
+}
+
+fn model_context(value: CoreLogContext) -> LogContext {
+    LogContext {
+        context_type: value.context_type,
+        attributes: value.attributes,
+    }
+}
+
+fn validate_entries_filter(query: &LogEntriesQuery) -> Result<()> {
+    validate_time_range(query.created_after, query.created_before)
+}
+
+fn validate_stream_filter(query: &LogStreamQuery) -> Result<()> {
+    validate_time_range(query.created_after, query.created_before)
+}
+
+fn validate_time_range(
+    created_after: Option<chrono::DateTime<chrono::Utc>>,
+    created_before: Option<chrono::DateTime<chrono::Utc>>,
+) -> Result<()> {
+    if let (Some(after), Some(before)) = (created_after, created_before)
+        && after >= before
+    {
+        return Err(LogError::InvalidRequest(
+            "created-after must be earlier than created-before".into(),
+        )
+        .into());
+    }
+    Ok(())
+}
+
+fn core_configuration(value: LogConfiguration) -> CoreLogConfiguration {
+    CoreLogConfiguration {
+        context: core_context(value.context),
+        severity: core_severity(value.severity),
+    }
+}
+
+fn model_configuration(value: CoreLogConfiguration) -> LogConfiguration {
+    LogConfiguration {
+        context: model_context(value.context),
+        severity: model_severity(value.severity),
+    }
+}
+
+fn model_entry(value: CoreLogEntry) -> LogEntry {
+    LogEntry {
+        timestamp: value.timestamp,
+        context: model_context(value.context),
+        severity: model_severity(value.severity),
+        msg: value.msg,
+        href: value.href.map(Into::into),
+    }
+}

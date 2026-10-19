@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 Contributors to the Eclipse Foundation
 // SPDX-License-Identifier: Apache-2.0
-#![allow(clippy::expect_used, clippy::unwrap_used)]
+#![expect(clippy::expect_used)]
 
 use std::time::Duration;
 
@@ -42,7 +42,7 @@ async fn select_reuses_transport() {
 
     // The selected client must reuse the same (mock) transport and hit the advertised base.
     let list = client.list_components().send().await.unwrap();
-    assert!(list.data.items.is_empty());
+    assert!(list.items.is_empty());
 }
 
 #[tokio::test]
@@ -116,7 +116,6 @@ async fn select_matches_on_vendor_info() {
             .send()
             .await
             .unwrap()
-            .data
             .items
             .is_empty()
     );

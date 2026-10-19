@@ -1,20 +1,17 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 Contributors to the Eclipse Foundation
 // SPDX-License-Identifier: Apache-2.0
 
-#![allow(clippy::indexing_slicing)]
+#![expect(clippy::indexing_slicing)]
 
 mod common;
 
 use http_body_util::BodyExt;
 use hyper::Request;
-use opensovd_core::{
-    Component, DiscoveryError, DiscoveryProvider, DiscoveryStream, EntityCollection, Topology,
-};
+use opensovd_core::{App, Component, Topology};
 use opensovd_server::Server;
-use tokio::time::Duration;
 
 // not a #[test] fn, so the test-only unwrap allowance does not apply here
-#[allow(clippy::unwrap_used)]
+#[expect(clippy::unwrap_used)]
 async fn advertised_base_uri(server: &common::TestServer, path: &str) -> String {
     let client = common::client();
     let request = Request::builder()
@@ -230,60 +227,58 @@ async fn test_unknown_path_returns_generic_error() {
     }
 }
 
-struct MockDiscoveryProvider {
-    component: Component,
-}
+#[tokio::test]
+async fn test_missing_data_provider_returns_resource_not_found() {
+    let topology = Topology::new();
+    {
+        let mut topo = topology.write().await;
+        topo.add_component(Component::new("Display", "Display"));
+        topo.add_app(App::new("Radio", "Radio"));
+    }
+    let server = common::TestServer::builder()
+        .topology(topology)
+        .build()
+        .await;
+    let client = hyper_util::client::legacy::Client::builder(hyper_util::rt::TokioExecutor::new())
+        .build_http::<http_body_util::Full<bytes::Bytes>>();
 
-#[async_trait::async_trait]
-impl DiscoveryProvider for MockDiscoveryProvider {
-    async fn discover(&self) -> Result<DiscoveryStream, DiscoveryError> {
-        let entities = EntityCollection {
-            components: vec![Component::new(self.component.id(), self.component.name())],
-            ..Default::default()
-        };
-        Ok(Box::pin(futures::stream::once(async {
-            Ok((vec![], entities))
-        })))
+    for entity in ["components/Display", "apps/Radio"] {
+        for (method, resource, body) in [
+            ("GET", "data-categories", ""),
+            ("GET", "data-groups", ""),
+            ("GET", "data", ""),
+            ("GET", "data/volume", ""),
+            ("PUT", "data/volume", r#"{"data": 1}"#),
+        ] {
+            let path = format!("/sovd/v1/{entity}/{resource}");
+            let request = Request::builder()
+                .method(method)
+                .uri(server.url(&path))
+                .header("content-type", "application/json")
+                .body(http_body_util::Full::new(bytes::Bytes::from_static(
+                    body.as_bytes(),
+                )))
+                .unwrap();
+
+            let response = client.request(request).await.unwrap();
+            assert_eq!(response.status(), 404, "{method} {path}");
+
+            let body = response.into_body().collect().await.unwrap().to_bytes();
+            let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+            assert_eq!(json["error_code"], "vendor-specific", "{method} {path}");
+            assert_eq!(json["vendor_code"], "resource-not-found", "{method} {path}");
+            assert_eq!(
+                json["message"],
+                format!("Resource not found: {path}"),
+                "{method} {path}"
+            );
+        }
     }
 }
 
 #[tokio::test]
-async fn test_discovery_adds_component() {
-    let provider = MockDiscoveryProvider {
-        component: Component::new("discovered-ecu", "Discovered ECU"),
-    };
-
-    let server = common::TestServer::builder()
-        .discovery(provider)
-        .build()
-        .await;
-    let client = common::client();
-
-    // Give the discovery task time to process the event.
-    tokio::time::sleep(Duration::from_millis(100)).await;
-
-    let request = Request::builder()
-        .uri(server.url("/sovd/v1/components/discovered-ecu"))
-        .body(http_body_util::Empty::<bytes::Bytes>::new())
-        .unwrap();
-
-    let response = client.request(request).await.unwrap();
-    assert!(
-        response.status().is_success(),
-        "Expected discovered component to be present, got {}",
-        response.status()
-    );
-
-    let body = response.into_body().collect().await.unwrap().to_bytes();
-    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
-
-    assert_eq!(json["id"], "discovered-ecu");
-    assert_eq!(json["name"], "Discovered ECU");
-}
-
-#[tokio::test]
 async fn test_service() {
-    let svc = tower::service_fn(|_req: http::Request<opensovd_server::Body>| async {
+    let svc = tower::service_fn(|_req: Request<opensovd_server::Body>| async {
         Ok::<_, std::convert::Infallible>(http::Response::new(http_body_util::Full::new(
             bytes::Bytes::from("from service"),
         )))

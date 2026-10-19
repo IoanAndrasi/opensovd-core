@@ -1,16 +1,14 @@
 # Testing
 
-pytest serves as the unified test driver, orchestrating tests across different tools:
-
-- **cargo**: Rust unit and integration tests
-- **pytest**: Python integration tests
-- **Bruno**: API conformance tests
+cargo-nextest runs the Rust unit and integration tests; pytest runs the end-to-end tests against the built binaries.
 
 Run all tests:
 
 ```bash
-uv run pytest
+mise run test
 ```
+
+Each test task writes its report per binary to `target/reports/<binary>/<triple>/<stage>/`: `unit/junit.xml`, `integration/index.html` and `coverage/`.
 
 ## Testing with pytest
 
@@ -53,10 +51,7 @@ def test_graceful_shutdown(gateway):
 ## Testing with Bruno
 
 [Bruno](https://www.usebruno.com/) is used for interactive API testing and conformance testing against the SOVD specification.
-
-> **Note:** pytest invokes the Bruno CLI (`bru run`) as a subprocess when running Bruno tests. See [`tests/bruno/conftest.py`](../tests/bruno/conftest.py) for the implementation.
->
-> **Note:** Bruno tests are automatically skipped when the `bru` CLI is not installed. Install it with `npm install -g @usebruno/cli` to enable them.
+The collection runs against a gateway started with `cargo run --bin opensovd-gateway`; it is not part of the pytest suite.
 
 ### Interactive API Testing
 
@@ -68,7 +63,7 @@ def test_graceful_shutdown(gateway):
 
 ### CLI Testing
 
-Run all tests:
+Install the CLI with `npm install -g @usebruno/cli` and run all tests:
 
 ```bash
 cd tests/bruno
@@ -155,25 +150,20 @@ curl -s http://localhost:7690/sovd/v1/components/gateway/data/sw.version | jq
   }
 }
 
-# Read data with schema included (definitions omitted)
-curl -s http://localhost:7690/sovd/v1/components/gateway/data/sw.version?include-schema=true | jq 'del(.schema."$defs")'
+# Read data with schema included (error schema omitted)
+curl -s http://localhost:7690/sovd/v1/components/gateway/data/sw.version?include-schema=true | jq 'del(.schema.properties.errors.items)'
 {
   "id": "sw.version",
   "data": {
     "value": "0.1.0-mock"
   },
   "schema": {
-    "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "title": "ReadResponse",
     "type": "object",
     "properties": {
       "id": {
         "type": "string"
       },
       "data": {
-        "$id": "urn:opensovd:components/gateway/data/sw.version",
-        "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "title": "Value",
         "type": "object",
         "properties": {
           "value": {
@@ -183,10 +173,7 @@ curl -s http://localhost:7690/sovd/v1/components/gateway/data/sw.version?include
         "required": ["value"]
       },
       "errors": {
-        "type": ["array", "null"],
-        "items": {
-          "$ref": "#/$defs/DataErrorEntry"
-        }
+        "type": ["array", "null"]
       },
       "schema": true
     },
@@ -275,16 +262,14 @@ cargo run --example client -- --unix-socket @opensovd --url http://localhost/sov
 
 ## Testing with cargo
 
-Run Rust unit and integration tests directly:
-
-> **Note:** pytest invokes `cargo test` as a subprocess when running the full test suite. See [`tests/test_rust.py`](../tests/test_rust.py) for the implementation.
+`mise run test:unit gateway` runs the tests of every workspace crate the gateway is built from with cargo-nextest, then their doc tests with `cargo test --doc`. To run them directly:
 
 ```bash
 # Run all Rust tests
-cargo test
+cargo nextest run --workspace
 
 # Run tests for a specific crate
-cargo test -p opensovd-gateway
+cargo nextest run -p opensovd-server
 ```
 
 | Type        | Location      | Description                   |

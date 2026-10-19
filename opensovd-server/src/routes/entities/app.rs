@@ -10,7 +10,6 @@ use axum::{
 };
 use axum_extra::extract::{Query, WithRejection};
 use opensovd_core::Topology;
-use opensovd_models::Response;
 use opensovd_models::discovery::{
     Entities, EntitiesQuery, EntityCapabilities, EntityCapabilitiesQuery, EntityReference,
 };
@@ -35,8 +34,8 @@ where
 pub(super) async fn app_list(
     State(topology): State<Topology>,
     parts: Parts,
-    axum_extra::extract::Query(query): axum_extra::extract::Query<EntitiesQuery>,
-) -> Result<Json<Response<Entities>>> {
+    WithRejection(Query(query), _): WithRejection<Query<EntitiesQuery>, Error>,
+) -> Result<Json<Entities>> {
     let base = super::super::versioned_uri(&parts);
     let items = topology
         .read()
@@ -59,8 +58,8 @@ pub(super) async fn app_list(
         })
         .collect();
 
-    Ok(Json(Response {
-        data: Entities { items },
+    Ok(Json(Entities {
+        items,
         schema: query.include_schema.then(Entities::schema),
     }))
 }
@@ -70,21 +69,21 @@ pub(super) async fn app_list(
 /// Returns the capabilities of a specific app.
 pub(super) async fn app_capabilities(
     State(topology): State<Topology>,
-    Path(app_id): Path<String>,
+    WithRejection(Path(app_id), _): WithRejection<Path<String>, Error>,
     parts: Parts,
     WithRejection(Query(query), _): WithRejection<Query<EntityCapabilitiesQuery>, Error>,
-) -> Result<Json<Response<EntityCapabilities>>> {
+) -> Result<Json<EntityCapabilities>> {
     let topo = topology.read().await;
     let entity = topo
         .get_app(&app_id)
         .map_err(|_| Error::EntityNotFound(app_id.clone()))?;
 
-    let variant = (!entity.metadata().is_empty()).then(|| entity.metadata().clone());
+    let variant = super::variant(entity.metadata());
     let translation_id = entity.translation_id().map(String::from);
 
     let base = super::super::versioned_uri(&parts);
     // Direct references, advertised only when the target exists.
-    let is_located_on = topo
+    let located_on = topo
         .component_of_app(&app_id)
         .ok()
         .flatten()
@@ -104,24 +103,26 @@ pub(super) async fn app_capabilities(
         .bulkdata_provider()
         .map(|_| format!("{base}/apps/{}/bulk-data", encode_path_segment(&app_id)).into());
 
-    Ok(Json(Response {
-        data: EntityCapabilities {
-            id: app_id,
-            name: entity.name().to_string(),
-            translation_id,
-            variant,
-            is_located_on,
-            belongs_to,
-            data,
-            bulk_data,
-            ..Default::default()
-        },
+    let logs = entity
+        .log_provider()
+        .map(|_| format!("{base}/apps/{}/logs", encode_path_segment(&app_id)).into());
+
+    Ok(Json(EntityCapabilities {
+        id: app_id,
+        name: entity.name().to_string(),
+        translation_id,
+        variant,
+        located_on,
+        belongs_to,
+        data,
+        bulk_data,
+        logs,
         schema: query.include_schema.then(EntityCapabilities::schema),
+        ..Default::default()
     }))
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use axum::{body::Body, http::Request};
     use http_body_util::BodyExt;

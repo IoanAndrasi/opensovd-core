@@ -6,12 +6,13 @@ name = "opensovd-tests"
 version = "0.1.0"
 requires-python = ">=3.13"
 dependencies = [
-    "cryptography>=50.0.1",
+    "cryptography>=50.0.2",
     "pytest>=9.1.1",
     "httpx>=0.28.1",
     "jsonschema>=4.26",
     "openapi-spec-validator>=0.9.0",
     "PyJWT>=2.13.0",
+    "zeroconf>=0.151.5",
 ]
 
 [dependency-groups]
@@ -28,10 +29,7 @@ pythonpath = ["tests", "opensovd-e2e/src"]
 # share filenames like test_version.py without basename collisions.
 addopts = "--import-mode=importlib"
 markers = [
-    "conformance: Conformance tests (require bru CLI)",
     "schema: Tests that validate response schema",
-    "bruno: Bruno API conformance tests",
-    # "req" marker is registered by the opensovd_e2e plugin.
 ]
 
 [tool.ruff]

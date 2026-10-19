@@ -8,7 +8,6 @@
 
 use axum::{Router, extract::State, http::request::Parts, response::Json, routing::get};
 use axum_extra::extract::{Query, WithRejection};
-use opensovd_models::Response;
 use opensovd_models::version::{SovdInfo, VersionInfo, VersionInfoQuery};
 use serde::Serialize;
 
@@ -31,28 +30,24 @@ async fn version_info<V>(
     State(state): State<AppState<V>>,
     parts: Parts,
     WithRejection(Query(query), _): WithRejection<Query<VersionInfoQuery>, Error>,
-) -> Json<Response<VersionInfo<V>>>
+) -> Json<VersionInfo<V>>
 where
     V: Serialize + Clone + Send + Sync + 'static,
     VersionInfo<V>: JsonSchema,
 {
     let base_uri = super::versioned_uri(&parts);
 
-    Json(Response {
-        data: VersionInfo {
-            sovd_info: vec![SovdInfo {
-                version: super::SOVD_VERSION.into(),
-                base_uri: base_uri.into(),
-                vendor_info: state.vendor_info,
-            }],
-        },
+    Json(VersionInfo {
+        sovd_info: vec![SovdInfo {
+            version: super::SOVD_VERSION.into(),
+            base_uri: base_uri.into(),
+            vendor_info: state.vendor_info,
+        }],
         schema: query.include_schema.then(VersionInfo::<V>::schema),
     })
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
-#[allow(clippy::string_slice)]
 mod tests {
     use axum::{body::Body, http::Request};
     use http_body_util::BodyExt;
@@ -199,17 +194,11 @@ mod tests {
         assert_eq!(json["sovd_info"][0]["vendor_info"]["product"], "SOVD");
         assert_eq!(json["sovd_info"][0]["vendor_info"]["build"], 42);
 
-        // Verify schema structure (schemars 1.0 uses JSON Schema 2020-12)
         let schema = &json["schema"];
-        assert_eq!(
-            schema["$schema"],
-            "https://json-schema.org/draft/2020-12/schema"
-        );
-        assert_eq!(schema["title"], "VersionInfo");
 
-        // Verify CustomVendor is in $defs with correct properties (schemars 1.0 uses $defs)
-        let vendor_def = &schema["$defs"]["CustomVendor"];
-        assert_eq!(vendor_def["type"], "object");
+        // Verify CustomVendor is inlined with correct properties
+        let vendor_def = &schema["properties"]["sovd_info"]["items"]["properties"]["vendor_info"];
+        assert_eq!(vendor_def["type"], serde_json::json!(["object", "null"]));
         assert_eq!(vendor_def["properties"]["product"]["type"], "string");
         assert_eq!(vendor_def["properties"]["build"]["type"], "integer");
         assert_eq!(vendor_def["properties"]["build"]["format"], "uint32");

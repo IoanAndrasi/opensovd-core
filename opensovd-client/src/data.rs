@@ -3,7 +3,6 @@
 
 use std::borrow::Borrow;
 
-use opensovd_models::Response;
 use opensovd_models::data::{DataCategory, DataList, ReadResponse, WriteRequest};
 use serde::Serialize;
 
@@ -62,7 +61,7 @@ impl ListDataRequest<'_> {
     }
 
     /// Send the request.
-    pub async fn send(&self) -> Result<Response<DataList>> {
+    pub async fn send(&self) -> Result<DataList> {
         let mut query: Vec<(String, String)> = Vec::new();
         for g in &self.groups {
             query.push(("groups".into(), encode(g)));
@@ -106,7 +105,6 @@ impl DataRequest<'_> {
     /// # Errors
     ///
     /// Returns an error if `value` cannot be serialized to JSON.
-    #[allow(clippy::result_large_err)]
     pub fn write(&self, value: &impl Serialize) -> Result<WriteDataRequest<'_>> {
         Ok(WriteDataRequest {
             client: self.client,

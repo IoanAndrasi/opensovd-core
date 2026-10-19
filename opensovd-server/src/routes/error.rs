@@ -6,12 +6,13 @@
 //! Defines error types that convert to SOVD-compliant HTTP error responses.
 
 use axum::{
-    extract::rejection::JsonRejection,
+    extract::path::ErrorKind,
+    extract::rejection::{JsonRejection, PathRejection},
     http::{StatusCode, header},
     response::{IntoResponse, Json, Response},
 };
 use axum_extra::{extract::QueryRejection, typed_header::TypedHeaderRejection};
-use opensovd_core::{BulkDataError, DataError, TopologyError};
+use opensovd_core::{BulkDataError, DataError, LogError, TopologyError};
 use opensovd_models::{ErrorCode, ErrorDetails, GenericError, JsonPointer};
 
 /// A `Result` alias where the `Err` variant is [`Error`].
@@ -22,14 +23,16 @@ pub type Result<T> = std::result::Result<T, Error>;
 pub enum Error {
     #[error("entity not found: {0}")]
     EntityNotFound(String),
-    #[error("provider not available: {0}")]
-    ProviderNotAvailable(String),
     #[error("resource not found: {0}")]
     ResourceNotFound(String),
     #[error(transparent)]
     Data(#[from] DataError),
     #[error(transparent)]
     BulkData(#[from] BulkDataError),
+    #[error(transparent)]
+    Log(#[from] LogError),
+    #[error("{0}")]
+    BadPath(#[from] PathRejection),
     #[error("{0}")]
     BadQuery(#[from] QueryRejection),
     #[error("{0}")]
@@ -79,6 +82,42 @@ fn body_rejection(rejection: &JsonRejection) -> (StatusCode, ErrorDetails) {
     }
 }
 
+/// The message for a path that does not parse, naming a param that is not
+/// UTF-8.
+fn bad_path(rejection: &PathRejection) -> String {
+    if let PathRejection::FailedToDeserializePathParams(e) = rejection
+        && let ErrorKind::InvalidUtf8InPathParam { key } = e.kind()
+    {
+        return format!("Invalid UTF-8 in `{key}`");
+    }
+    "Bad request path".to_owned()
+}
+
+/// An internal error is logged and answered without its details.
+fn internal(message: &str) -> GenericError {
+    tracing::error!(target: "srv", error = %message, "Internal error");
+    GenericError::new(ErrorCode::SovdServerFailure, "An internal error occurred")
+}
+
+/// The status and body answering a bulk-data error.
+pub(super) fn bulk_data_error(e: &BulkDataError) -> (StatusCode, GenericError) {
+    match e {
+        BulkDataError::InvalidRequest(_) => (
+            StatusCode::BAD_REQUEST,
+            GenericError::new(ErrorCode::IncompleteRequest, e.to_string()),
+        ),
+        BulkDataError::NotFound(_) => (
+            StatusCode::NOT_FOUND,
+            GenericError::with_vendor_code("resource-not-found", e.to_string()),
+        ),
+        BulkDataError::DeletionFailed(_) => (
+            StatusCode::CONFLICT,
+            GenericError::with_vendor_code("unable-to-delete", e.to_string()),
+        ),
+        BulkDataError::Internal(message) => (StatusCode::INTERNAL_SERVER_ERROR, internal(message)),
+    }
+}
+
 impl IntoResponse for Error {
     fn into_response(self) -> Response {
         let (status, details): (_, ErrorDetails) = match &self {
@@ -98,67 +137,50 @@ impl IntoResponse for Error {
                 )
                 .into(),
             ),
-            Self::ProviderNotAvailable(provider) => (
-                StatusCode::NOT_FOUND,
-                GenericError::with_vendor_code(
-                    "provider-not-available",
-                    format!("Component has no {provider}"),
-                )
-                .into(),
-            ),
-            Self::Data(e) => {
-                let status = match e {
-                    DataError::NotFound(_) => StatusCode::NOT_FOUND,
-                    DataError::ReadOnly => {
-                        return (
-                            StatusCode::METHOD_NOT_ALLOWED,
-                            [(header::ALLOW, "GET")],
-                            Json(GenericError::with_vendor_code("read-only", e.to_string())),
-                        )
-                            .into_response();
-                    }
-                    DataError::InvalidValue { path, message } => {
-                        let details = data_error(format!("/data{path}"), message);
-                        return (StatusCode::BAD_REQUEST, Json(details)).into_response();
-                    }
-                    DataError::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
-                };
-
-                // Sanitize internal errors - log details, return generic message
-                let message = match e {
-                    DataError::Internal(msg) => {
-                        tracing::error!(target: "srv", error = %msg, "Internal error");
-                        "An internal error occurred".to_string()
-                    }
-                    _ => e.to_string(),
-                };
-
-                (
-                    status,
-                    GenericError::new(ErrorCode::ErrorResponse, message).into(),
-                )
-            }
+            Self::Data(e) => match e {
+                DataError::NotFound(_) => provider_error(
+                    StatusCode::NOT_FOUND,
+                    e,
+                    GenericError::with_vendor_code("resource-not-found", e.to_string()).into(),
+                ),
+                DataError::ReadOnly => {
+                    return (
+                        StatusCode::METHOD_NOT_ALLOWED,
+                        [(header::ALLOW, "GET")],
+                        Json(GenericError::with_vendor_code("read-only", e.to_string())),
+                    )
+                        .into_response();
+                }
+                DataError::WriteOnly => {
+                    return (
+                        StatusCode::METHOD_NOT_ALLOWED,
+                        [(header::ALLOW, "PUT")],
+                        Json(GenericError::with_vendor_code("write-only", e.to_string())),
+                    )
+                        .into_response();
+                }
+                DataError::InvalidValue { path, message } => provider_error(
+                    StatusCode::BAD_REQUEST,
+                    e,
+                    data_error(format!("/data{path}"), message),
+                ),
+                DataError::Internal(message) => provider_error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    e,
+                    internal(message).into(),
+                ),
+            },
             Self::BulkData(e) => {
-                let status = match e {
-                    BulkDataError::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
-                    BulkDataError::DeletionFailed(_) => StatusCode::CONFLICT,
-                    BulkDataError::InvalidRequest(_) => StatusCode::BAD_REQUEST,
-                    BulkDataError::NotFound(_) => StatusCode::NOT_FOUND,
-                };
-
-                // Sanitize internal errors - log details, return generic message
-                let message = match e {
-                    BulkDataError::Internal(msg) => {
-                        tracing::error!(target: "srv", error = %msg, "Internal error");
-                        "An internal error occurred".to_string()
-                    }
-                    _ => e.to_string(),
-                };
-
-                (
-                    status,
-                    GenericError::new(ErrorCode::ErrorResponse, message).into(),
-                )
+                let (status, error) = bulk_data_error(e);
+                provider_error(status, e, error.into())
+            }
+            Self::BadPath(rejection) => (
+                StatusCode::BAD_REQUEST,
+                GenericError::new(ErrorCode::IncompleteRequest, bad_path(rejection)).into(),
+            ),
+            Self::Log(e) => {
+                let (status, error) = log_error(e);
+                provider_error(status, e, error.into())
             }
             Self::BadQuery(_) => (
                 StatusCode::BAD_REQUEST,
@@ -173,11 +195,10 @@ impl IntoResponse for Error {
                 let status = match e {
                     TopologyError::NotFound(_) => StatusCode::NOT_FOUND,
                 };
-                tracing::error!(target: "srv", error = %e, "Topology error");
-                let message = e.to_string();
+                tracing::debug!(target: "srv", error = %e, "Topology error");
                 (
                     status,
-                    GenericError::new(ErrorCode::ErrorResponse, message).into(),
+                    GenericError::with_vendor_code("entity-not-found", e.to_string()).into(),
                 )
             }
         };
@@ -185,13 +206,53 @@ impl IntoResponse for Error {
     }
 }
 
+/// The status and body answering a log-provider error before common handling.
+fn log_error(e: &LogError) -> (StatusCode, GenericError) {
+    match e {
+        LogError::InvalidRequest(_) => (
+            StatusCode::BAD_REQUEST,
+            GenericError::new(ErrorCode::IncompleteRequest, e.to_string()),
+        ),
+        LogError::NotFound(_) => (
+            StatusCode::NOT_FOUND,
+            GenericError::with_vendor_code("resource-not-found", e.to_string()),
+        ),
+        LogError::NotSupported(_) => (
+            StatusCode::NOT_IMPLEMENTED,
+            GenericError::new(ErrorCode::ErrorResponse, e.to_string()),
+        ),
+        LogError::Internal(message) => (StatusCode::INTERNAL_SERVER_ERROR, internal(message)),
+    }
+}
+
+/// A provider error as an `error-response`; a 500 logs the details and hides them.
+fn provider_error(
+    status: StatusCode,
+    error: &impl std::fmt::Display,
+    details: ErrorDetails,
+) -> (StatusCode, ErrorDetails) {
+    if status == StatusCode::INTERNAL_SERVER_ERROR {
+        tracing::error!(target: "srv", error = %error, "Internal error");
+        (
+            status,
+            GenericError::new(ErrorCode::SovdServerFailure, "An internal error occurred").into(),
+        )
+    } else {
+        (status, details)
+    }
+}
+
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use http_body_util::BodyExt;
     use opensovd_core::EntityRef;
 
     use super::*;
+
+    async fn json_body(response: Response) -> serde_json::Value {
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        serde_json::from_slice(&body).unwrap()
+    }
 
     #[tokio::test]
     async fn test_error_entity_not_found() {
@@ -220,23 +281,16 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_error_provider_not_available() {
-        let error = Error::ProviderNotAvailable("data".into());
-        let response = error.into_response();
-
-        assert_eq!(response.status(), 404);
-
-        let body = response.into_body().collect().await.unwrap().to_bytes();
-        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
-        assert_eq!(json["vendor_code"], "provider-not-available");
-    }
-
-    #[tokio::test]
     async fn test_error_data_not_found() {
         let error = Error::Data(DataError::NotFound("voltage".into()));
         let response = error.into_response();
 
         assert_eq!(response.status(), 404);
+
+        let json = json_body(response).await;
+        assert_eq!(json["error_code"], "vendor-specific");
+        assert_eq!(json["vendor_code"], "resource-not-found");
+        assert!(json["message"].as_str().unwrap().contains("voltage"));
     }
 
     #[tokio::test]
@@ -251,6 +305,19 @@ mod tests {
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(json["error_code"], "vendor-specific");
         assert_eq!(json["vendor_code"], "read-only");
+    }
+
+    #[tokio::test]
+    async fn test_error_data_write_only() {
+        let error = Error::Data(DataError::WriteOnly);
+        let response = error.into_response();
+
+        assert_eq!(response.status(), 405);
+        assert_eq!(response.headers()[header::ALLOW], "PUT");
+
+        let json = json_body(response).await;
+        assert_eq!(json["error_code"], "vendor-specific");
+        assert_eq!(json["vendor_code"], "write-only");
     }
 
     #[tokio::test]
@@ -280,9 +347,63 @@ mod tests {
         // Verify internal details are sanitized - client receives generic message
         let body = response.into_body().collect().await.unwrap().to_bytes();
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["error_code"], "sovd-server-failure");
         assert_eq!(json["message"], "An internal error occurred");
         // Ensure the actual error details are NOT leaked
         assert!(!json["message"].as_str().unwrap().contains("lock poisoned"));
+    }
+
+    #[tokio::test]
+    async fn test_error_bulk_data_invalid_request() {
+        let error = Error::BulkData(BulkDataError::InvalidRequest("no file content".into()));
+        let response = error.into_response();
+
+        assert_eq!(response.status(), 400);
+
+        let json = json_body(response).await;
+        assert_eq!(json["error_code"], "incomplete-request");
+        assert!(
+            json["message"]
+                .as_str()
+                .unwrap()
+                .contains("no file content")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_error_bulk_data_not_found() {
+        let error = Error::BulkData(BulkDataError::NotFound("log.txt".into()));
+        let response = error.into_response();
+
+        assert_eq!(response.status(), 404);
+
+        let json = json_body(response).await;
+        assert_eq!(json["error_code"], "vendor-specific");
+        assert_eq!(json["vendor_code"], "resource-not-found");
+    }
+
+    #[tokio::test]
+    async fn test_error_bulk_data_deletion_failed() {
+        let error = Error::BulkData(BulkDataError::DeletionFailed("in use".into()));
+        let response = error.into_response();
+
+        assert_eq!(response.status(), 409);
+
+        let json = json_body(response).await;
+        assert_eq!(json["error_code"], "vendor-specific");
+        assert_eq!(json["vendor_code"], "unable-to-delete");
+    }
+
+    #[tokio::test]
+    async fn test_error_bulk_data_internal() {
+        let error = Error::BulkData(BulkDataError::Internal("disk full".into()));
+        let response = error.into_response();
+
+        assert_eq!(response.status(), 500);
+
+        let json = json_body(response).await;
+        assert_eq!(json["error_code"], "sovd-server-failure");
+        assert_eq!(json["message"], "An internal error occurred");
     }
 
     #[tokio::test]
@@ -301,8 +422,9 @@ mod tests {
 
         assert_eq!(response.status(), 404);
 
-        let body = response.into_body().collect().await.unwrap().to_bytes();
-        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        let json = json_body(response).await;
+        assert_eq!(json["error_code"], "vendor-specific");
+        assert_eq!(json["vendor_code"], "entity-not-found");
         assert!(json["message"].as_str().unwrap().contains("area-1"));
     }
 
@@ -315,7 +437,7 @@ mod tests {
 
         #[derive(Deserialize)]
         struct TestQuery {
-            #[allow(dead_code)]
+            #[expect(dead_code)]
             flag: bool,
         }
 

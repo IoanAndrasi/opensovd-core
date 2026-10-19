@@ -11,6 +11,8 @@ use opensovd_providers::data::{Constant, DataProviderBuilder};
 
 mod bulkdata;
 pub use bulkdata::InMemoryBulkDataProvider;
+mod log;
+pub use log::InMemoryLogProvider;
 
 /// Creates a mock topology with sample ECU, gateway, and app entities.
 ///
@@ -18,7 +20,7 @@ pub use bulkdata::InMemoryBulkDataProvider;
 ///
 /// Panics if constant data values cannot be serialized (should not happen with valid literals).
 #[must_use]
-#[allow(clippy::too_many_lines, clippy::unwrap_used)]
+#[expect(clippy::too_many_lines, clippy::unwrap_used)]
 pub async fn create_mock_topology() -> Topology {
     // ECU entity with sensor data and version info
     #[rustfmt::skip]

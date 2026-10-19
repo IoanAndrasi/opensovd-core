@@ -10,7 +10,6 @@ use axum::{
 };
 use axum_extra::extract::{Query, WithRejection};
 use opensovd_core::Topology;
-use opensovd_models::Response;
 use opensovd_models::discovery::{
     Entities, EntitiesQuery, EntityCapabilities, EntityCapabilitiesQuery, EntityReference,
 };
@@ -36,8 +35,8 @@ where
 pub(super) async fn area_list(
     State(topology): State<Topology>,
     parts: Parts,
-    axum_extra::extract::Query(query): axum_extra::extract::Query<EntitiesQuery>,
-) -> Result<Json<Response<Entities>>> {
+    WithRejection(Query(query), _): WithRejection<Query<EntitiesQuery>, Error>,
+) -> Result<Json<Entities>> {
     let base = super::super::versioned_uri(&parts);
     let items = topology
         .read()
@@ -60,8 +59,8 @@ pub(super) async fn area_list(
         })
         .collect();
 
-    Ok(Json(Response {
-        data: Entities { items },
+    Ok(Json(Entities {
+        items,
         schema: query.include_schema.then(Entities::schema),
     }))
 }
@@ -71,16 +70,16 @@ pub(super) async fn area_list(
 /// Returns the capabilities of a specific area.
 pub(super) async fn area_capabilities(
     State(topology): State<Topology>,
-    Path(area_id): Path<String>,
+    WithRejection(Path(area_id), _): WithRejection<Path<String>, Error>,
     parts: Parts,
     WithRejection(Query(query), _): WithRejection<Query<EntityCapabilitiesQuery>, Error>,
-) -> Result<Json<Response<EntityCapabilities>>> {
+) -> Result<Json<EntityCapabilities>> {
     let topo = topology.read().await;
     let entity = topo
         .get_area(&area_id)
         .map_err(|_| Error::EntityNotFound(area_id.clone()))?;
 
-    let variant = (!entity.metadata().is_empty()).then(|| entity.metadata().clone());
+    let variant = super::variant(entity.metadata());
     let translation_id = entity.translation_id().map(String::from);
 
     let base = super::super::versioned_uri(&parts);
@@ -90,16 +89,14 @@ pub(super) async fn area_capabilities(
     let contains = has_members
         .then(|| format!("{base}/areas/{}/contains", encode_path_segment(&area_id)).into());
 
-    Ok(Json(Response {
-        data: EntityCapabilities {
-            id: area_id,
-            name: entity.name().to_string(),
-            translation_id,
-            variant,
-            contains,
-            ..Default::default()
-        },
+    Ok(Json(EntityCapabilities {
+        id: area_id,
+        name: entity.name().to_string(),
+        translation_id,
+        variant,
+        contains,
         schema: query.include_schema.then(EntityCapabilities::schema),
+        ..Default::default()
     }))
 }
 
@@ -108,10 +105,10 @@ pub(super) async fn area_capabilities(
 /// Returns the list of components and apps contained in a specific area.
 pub(super) async fn area_contains(
     State(topology): State<Topology>,
-    Path(area_id): Path<String>,
+    WithRejection(Path(area_id), _): WithRejection<Path<String>, Error>,
     parts: Parts,
-    axum_extra::extract::Query(query): axum_extra::extract::Query<EntitiesQuery>,
-) -> Result<Json<Response<Entities>>> {
+    WithRejection(Query(query), _): WithRejection<Query<EntitiesQuery>, Error>,
+) -> Result<Json<Entities>> {
     // Verify area exists and get contained entities atomically
     let topo = topology.read().await;
     topo.get_area(&area_id)
@@ -161,14 +158,13 @@ pub(super) async fn area_contains(
         }),
     );
 
-    Ok(Json(Response {
-        data: Entities { items },
+    Ok(Json(Entities {
+        items,
         schema: query.include_schema.then(Entities::schema),
     }))
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use axum::{body::Body, http::Request};
     use http_body_util::BodyExt;
@@ -241,7 +237,7 @@ mod tests {
             .body(Body::empty())
             .unwrap();
         let response = app.oneshot(request).await.unwrap();
-        assert_eq!(response.status(), axum::http::StatusCode::OK);
+        assert_eq!(response.status(), http::StatusCode::OK);
         let body = response.into_body().collect().await.unwrap().to_bytes();
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(json["items"], serde_json::json!([]));

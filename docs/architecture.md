@@ -8,8 +8,7 @@ classDiagram
 
     class Server {
         -listener: Listener
-        -authenticator: A
-        -authorizer: Z
+        -auth: Option~Auth~
         -topology: Topology
         -layer: L
         +builder() ServerBuilder
@@ -97,43 +96,36 @@ classDiagram
         -data_provider: Option~Arc~DataProvider~~
     }
 
-    class EntityCollection {
-        +components: Vec~Component~
-        +apps: Vec~App~
-        +areas: Vec~Area~
-        +entity_refs() Vec~EntityRef~
+    class Auth {
+        +new(authenticator, authorizer) Auth
     }
 
     class Authenticator {
         <<trait>>
-        +type Identity
-        +authenticate(parts) Future~Result~Identity, AuthError~~
+        +authenticate(parts) Result~Option~Principal~, AuthError~
     }
 
-    class Authorizer~I~ {
+    class Authorizer {
         <<trait>>
-        +authorize(identity, parts) Future~Result~(), AuthError~~
+        +authorize(access) bool
     }
 
-    class NoAuth {
-        Identity = ()
-    }
-
-    class AllowAll
+    class Authenticated
 
     class DataProvider {
         <<trait>>
-        +list(filter) Result~Vec~ValueMetadata~~
-        +read(data_id, include_schema) Result~DataValue~
-        +write(data_id, value) Result
-        +categories() Result~Vec~CategoryInfo~~
-        +groups(category_filter) Result~Vec~GroupInfo~~
-        +tags() Result~Vec~TagInfo~~
+        +data_list(filter) Result~Vec~ValueMetadata~~
+        +data_read(data_id, include_schema) Result~DataValue~
+        +data_write(data_id, value) Result
+        +data_categories() Result~Vec~CategoryInfo~~
+        +data_groups(category_filter) Result~Vec~GroupInfo~~
+        +data_tags() Result~Vec~TagInfo~~
     }
 
     Server --> Topology : uses
-    Server --> Authenticator : uses
-    Server --> Authorizer : uses
+    Server --> Auth : optional
+    Auth --> Authenticator : uses
+    Auth --> Authorizer : uses
     Topology --> TopologyReadGuard : produces
     Topology --> TopologyWriteGuard : produces
     TopologyReadGuard --> Component : queries
@@ -146,9 +138,7 @@ classDiagram
     App --> DataProvider : optional
     Area --> DataProvider : optional
     EntityRef --> EntityKind : has
-    NoAuth ..|> Authenticator : implements
-    AllowAll ..|> Authorizer : implements
-    Topology --> EntityCollection : accepts
+    Authenticated ..|> Authorizer : implements
 ```
 
 ## Main Components
@@ -179,7 +169,7 @@ A write guard over the topology state. Holds a `RwLockWriteGuard` for its lifeti
 
 ### EntityRef / EntityKind
 
-`EntityKind` is an enum with variants `Component`, `App`, and `Area`. `EntityRef` is a lightweight reference containing a `kind` and `id`. Factory methods `EntityRef::component()`, `EntityRef::app()`, and `EntityRef::area()` create refs. All entity structs hold an `EntityRef` and expose it via `entity_ref()`. `EntityCollection` groups `Vec<Component>`, `Vec<App>`, and `Vec<Area>` for batch topology operations.
+`EntityKind` is an enum with variants `Component`, `App`, and `Area`. `EntityRef` is a lightweight reference containing a `kind` and `id`. Factory methods `EntityRef::component()`, `EntityRef::app()`, and `EntityRef::area()` create refs. All entity structs hold an `EntityRef` and expose it via `entity_ref()`.
 
 **Crate:** `opensovd-core`
 
@@ -205,27 +195,27 @@ A SOVD area entity representing a logical view of vehicle architecture (e.g., do
 
 A pluggable data backend. Each entity holds its own provider instance, so methods operate on the provider directly without an entity reference:
 
-- `list(filter: DataFilter) → Vec<ValueMetadata>` — list data items, filtered by categories/groups/tags
-- `read(data_id, include_schema) → DataValue` — read a single data value
-- `write(data_id, value) → ()` — write a data value
+- `data_list(filter: DataFilter) → Vec<ValueMetadata>` — list data items, filtered by categories/groups/tags
+- `data_read(data_id, include_schema) → DataValue` — read a single data value
+- `data_write(data_id, value) → ()` — write a data value
 
-Default implementations derive from `list()`:
+Default implementations derive from `data_list()`:
 
-- `categories() → Vec<CategoryInfo>` — unique categories
-- `groups(category_filter) → Vec<GroupInfo>` — groups optionally filtered by category
-- `tags() → Vec<TagInfo>` — unique tags
+- `data_categories() → Vec<CategoryInfo>` — unique categories
+- `data_groups(category_filter) → Vec<GroupInfo>` — groups optionally filtered by category
+- `data_tags() → Vec<TagInfo>` — unique tags
 
 **Crate:** `opensovd-core`
 
 ### Authenticator (trait)
 
-Extracts and validates credentials from incoming requests. Has an associated type `Identity` representing the authenticated principal. Returns `Ok(Identity)` on success or `Err(AuthError::Unauthenticated)` on failure. `NoAuth` is the no-op implementation (Identity = `()`). Blanket impl for `Option<A>` returns `Option<A::Identity>`, allowing optional authentication.
+Validates the credentials of a request and returns the caller as a `Principal`, `Ok(None)` when the request carries none, or `Err(AuthError::InvalidToken)` when they are rejected.
 
 **Crate:** `opensovd-server`
 
 ### Authorizer (trait)
 
-Determines whether an authenticated identity has permission for a request. Generic over the identity type `I`. Takes `(identity, request_parts)` and returns `Ok(())` or `Err(AuthError::Unauthorized)`. Implementation: `AllowAll` permits all requests.
+Decides whether a request may proceed from its `Access`: the method, the template (relative to the mount path) and decoded parameters of the matched route, and the principal if any. `Authenticated` allows every authenticated caller.
 
 **Crate:** `opensovd-server`
 
@@ -244,7 +234,7 @@ sequenceDiagram
 
     C->>S: HTTP Request
     S->>MW: Forward request
-    MW->>MW: UserLayer → AuthN → AuthZ
+    MW->>MW: UserLayer → Auth
 
     alt Middleware rejection
         MW-->>C: 401/403 Error
@@ -261,7 +251,7 @@ sequenceDiagram
         R->>Top: topology.read()
         Top-->>R: TopologyReadGuard
         R->>R: Get entity via guard
-        R->>DP: list / read / write / categories / groups / tags
+        R->>DP: data_list / data_read / data_write / data_categories / data_groups / data_tags
         DP-->>R: Data result
     else Version Route (/version-info)
         R->>R: Return version info
@@ -276,10 +266,9 @@ sequenceDiagram
 Every request passes through the middleware stack in this order:
 
 1. **User layers** (CORS, tracing, etc.) — applied outermost via the configurable `Layer` generic.
-2. **`AuthenticationLayer`** — calls `Authenticator::authenticate()` to extract an identity from the request. On success, the identity is stored in request extensions. On failure, the request is rejected immediately with **401 (empty body)**.
-3. **`AuthorizationLayer`** — retrieves the identity from request extensions (set by AuthN) and calls `Authorizer::authorize()`. On failure, the request is rejected with **403** and a JSON `GenericError` body containing the `insufficient-access-rights` error code.
+2. **`Auth`** — runs after routing on every route and the fallback. It authenticates the request, then asks the authorizer. A denied request without a principal gets **401** with an empty body and a `WWW-Authenticate: Bearer` challenge; with a principal it gets **403** and a JSON `GenericError` body containing the `insufficient-access-rights` error code. Rejected credentials get **401** regardless of the policy.
 
-If both layers pass, the request is forwarded to the matched route handler.
+If the request is allowed, the principal is stored in the request extensions and the request is forwarded to the matched route handler.
 
 ### Entity Routes
 
@@ -287,7 +276,7 @@ If both layers pass, the request is forwarded to the matched route handler.
 
 ### Data Routes
 
-`GET /{entity}/{id}/data/{data_id}` acquires a read lock, fetches the entity from the `TopologyReadGuard`, extracts its `DataProvider`, and calls `read()`. `PUT` follows the same lookup but calls `write()` instead. Returns **404** if the entity or data item is not found, **405** with `Allow: GET` if a write is attempted on a read-only item, **400** with a `DataError` body if the request body is malformed or the value does not fit the item, and **204 No Content** on a successful write.
+`GET /{entity}/{id}/data/{data_id}` acquires a read lock, fetches the entity from the `TopologyReadGuard`, extracts its `DataProvider`, and calls `data_read()`. `PUT` follows the same lookup but calls `data_write()` instead. Returns **404** if the entity or data item is not found, **405** with `Allow: GET` if a write is attempted on a read-only item, **405** with `Allow: PUT` if a read is attempted on a write-only item, **400** with a `DataError` body if the request body is malformed or the value does not fit the item, and **204 No Content** on a successful write.
 
 ### Version Route
 

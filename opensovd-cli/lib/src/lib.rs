@@ -75,7 +75,10 @@ const TARGET: &str = "srv";
 /// # Panics
 ///
 /// Panics if the `SIGTERM` signal handler cannot be installed (Unix only).
-#[allow(clippy::expect_used)] // Panic on signal handler failure is intentional.
+#[expect(
+    clippy::expect_used,
+    reason = "panic on signal handler failure is intentional"
+)]
 pub async fn shutdown_signal() {
     #[cfg(unix)]
     let sigterm = async {
@@ -136,7 +139,7 @@ mod tests {
 
     #[cfg(unix)]
     #[tokio::test]
-    #[allow(unsafe_code)]
+    #[expect(unsafe_code)]
     async fn shutdown_signal_responds_to_sigterm() {
         use std::time::Duration;
 
@@ -149,7 +152,7 @@ mod tests {
 
     #[cfg(unix)]
     #[tokio::test]
-    #[allow(unsafe_code)]
+    #[expect(unsafe_code)]
     async fn shutdown_signal_responds_to_sigint() {
         use std::time::Duration;
 

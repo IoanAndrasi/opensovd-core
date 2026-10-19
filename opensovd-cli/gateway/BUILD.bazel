@@ -19,12 +19,12 @@ workspace_rust_binary(
     srcs = glob(["src/**/*.rs"]),
     crate_deps = [
         "anyhow",
-        "base64",
         "clap",
         "http",
         "schemars",
         "sd-notify",
         "serde",
+        "serde_json",
         "tokio",
         "tower",
         "tower-http",

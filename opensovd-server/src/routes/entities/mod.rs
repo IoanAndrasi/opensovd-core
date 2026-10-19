@@ -18,12 +18,14 @@ mod app;
 mod area;
 mod component;
 
+use std::collections::HashMap;
+
 use axum::{Router, extract::State, http::request::Parts, response::Json, routing::get};
 use axum_extra::extract::{Query, WithRejection};
 use opensovd_core::Topology;
-use opensovd_models::Response;
 use opensovd_models::discovery::{EntityCapabilities, EntityCapabilitiesQuery};
 use percent_encoding::{AsciiSet, CONTROLS, utf8_percent_encode};
+use serde_json::{Map, Value};
 
 use super::AppState;
 use super::error::{Error, Result};
@@ -47,7 +49,7 @@ async fn root_capabilities(
     State(topology): State<Topology>,
     parts: Parts,
     WithRejection(Query(query), _): WithRejection<Query<EntityCapabilitiesQuery>, Error>,
-) -> Result<Json<Response<EntityCapabilities>>> {
+) -> Result<Json<EntityCapabilities>> {
     let base = super::versioned_uri(&parts);
     let topo = topology.read().await;
 
@@ -58,17 +60,25 @@ async fn root_capabilities(
 
     let areas = (topo.areas().len() > 0).then(|| format!("{base}/areas").into());
 
-    Ok(Json(Response {
-        data: EntityCapabilities {
-            id: String::new(),   // Empty for SOVDServer
-            name: String::new(), // Empty for SOVDServer
-            components,
-            apps,
-            areas,
-            ..Default::default()
-        },
+    Ok(Json(EntityCapabilities {
+        id: String::new(),   // Empty for SOVDServer
+        name: String::new(), // Empty for SOVDServer
+        components,
+        apps,
+        areas,
         schema: query.include_schema.then(EntityCapabilities::schema),
+        ..Default::default()
     }))
+}
+
+/// The variant of an entity with metadata, each value as a list of one string.
+fn variant(metadata: &HashMap<String, String>) -> Option<Map<String, Value>> {
+    (!metadata.is_empty()).then(|| {
+        metadata
+            .iter()
+            .map(|(key, value)| (key.clone(), Value::from(vec![value.clone()])))
+            .collect()
+    })
 }
 
 /// Characters percent-encoded in a URI path segment: all that RFC 3986 does
@@ -100,7 +110,41 @@ pub(super) fn encode_path_segment(s: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::encode_path_segment;
+    use axum::{body::Body, http::Request};
+    use http_body_util::BodyExt;
+    use opensovd_mocks::create_mock_topology;
+    use tower::ServiceExt;
+
+    use super::super::AppState;
+    use super::{encode_path_segment, routes};
+
+    #[tokio::test]
+    async fn listings_reject_a_malformed_query_as_json() {
+        let state = AppState::<()> {
+            vendor_info: None,
+            topology: create_mock_topology().await,
+        };
+        let app = routes::<()>().with_state(state);
+
+        for path in [
+            "/areas",
+            "/areas/powertrain/contains",
+            "/apps",
+            "/components",
+            "/components/ecu/hosts",
+        ] {
+            let request = Request::builder()
+                .uri(format!("{path}?include-schema=maybe"))
+                .body(Body::empty())
+                .unwrap();
+            let response = app.clone().oneshot(request).await.unwrap();
+            assert_eq!(response.status(), 400, "{path}");
+
+            let body = response.into_body().collect().await.unwrap().to_bytes();
+            let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+            assert_eq!(json["error_code"], "incomplete-request", "{path}");
+        }
+    }
 
     #[test]
     fn encode_path_segment_keeps_only_path_characters() {
