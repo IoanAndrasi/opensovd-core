@@ -6,8 +6,19 @@
 use std::collections::HashMap;
 
 use opensovd_core::{App, Area, Component, Topology};
-use opensovd_models::data::DataCategory;
+use opensovd_models::{
+    data::DataCategory,
+    updates::{UpdateDetail, UpdateStatus},
+};
 use opensovd_providers::data::{Constant, DataProviderBuilder};
+
+mod bulkdata;
+mod updates;
+
+pub use bulkdata::InMemoryBulkDataProvider;
+mod log;
+pub use log::InMemoryLogProvider;
+pub use updates::{MockFeedback, MockUpdate, MockUpdateProvider};
 
 /// Creates a mock topology with sample ECU, gateway, and app entities.
 ///
@@ -15,7 +26,7 @@ use opensovd_providers::data::{Constant, DataProviderBuilder};
 ///
 /// Panics if constant data values cannot be serialized (should not happen with valid literals).
 #[must_use]
-#[allow(clippy::too_many_lines, clippy::unwrap_used)]
+#[expect(clippy::too_many_lines, clippy::unwrap_used)]
 pub async fn create_mock_topology() -> Topology {
     // ECU entity with sensor data and version info
     #[rustfmt::skip]
@@ -149,7 +160,8 @@ pub async fn create_mock_topology() -> Topology {
         .build()
         .unwrap();
 
-    let engine_control = App::new("engine_control", "Engine Control Application", "ecu")
+    let engine_control = App::new("engine_control", "Engine Control Application")
+        .with_component_id("ecu")
         .with_translation_id("app.engine_control.name")
         .with_tags(vec!["powertrain".to_string(), "critical".to_string()])
         .with_metadata(HashMap::from([
@@ -180,7 +192,8 @@ pub async fn create_mock_topology() -> Topology {
         .build()
         .unwrap();
 
-    let diagnostics = App::new("diagnostics", "Diagnostic Services", "gateway")
+    let diagnostics = App::new("diagnostics", "Diagnostic Services")
+        .with_component_id("gateway")
         .with_tags(vec!["network".to_string(), "service".to_string()])
         .with_area_id("network")
         .with_data_provider(diagnostics_provider);
@@ -206,14 +219,21 @@ pub async fn create_mock_topology() -> Topology {
         .build()
         .unwrap();
 
-    let ota_manager = App::new("ota_manager", "OTA Update Manager", "gateway")
+    let ota_manager = App::new("ota_manager", "OTA Update Manager")
+        .with_component_id("gateway")
         .with_translation_id("app.ota.name")
         .with_tags(vec!["system".to_string(), "infrastructure".to_string()])
         .with_metadata(HashMap::from([(
             "update_channel".to_string(),
             "stable".to_string(),
         )]))
-        .with_data_provider(ota_provider);
+        .with_data_provider(ota_provider)
+        .with_bulkdata_provider(
+            InMemoryBulkDataProvider::default().with_permanent_entry("logs", "cannot_delete"),
+        )
+        .with_update_provider::<MockUpdate, UpdateDetail, MockFeedback, UpdateStatus>(
+            MockUpdateProvider { failing: false },
+        );
     // Note: NO with_area_id() - tests optional belongs-to
 
     // Areas
@@ -232,6 +252,10 @@ pub async fn create_mock_topology() -> Topology {
         t.add_app(ota_manager);
         t.add_area(powertrain);
         t.add_area(network);
+        // also add a second update provider to the server root that always fails
+        t.add_update_provider::<MockUpdate, UpdateDetail, MockFeedback, UpdateStatus>(
+            MockUpdateProvider { failing: true },
+        );
     }
     topology
 }

@@ -11,7 +11,9 @@ use opensovd_core::{
     CategoryInfo, Data, DataError, DataFilter, DataProvider, DataScope, GroupInfo, Metadata,
     TagInfo,
 };
+use opensovd_models::JsonPointer;
 use opensovd_models::data::DataCategory;
+use serde::de::DeserializeOwned;
 use serde_json::Value;
 use thiserror::Error;
 
@@ -68,17 +70,23 @@ impl<T: ReadableDataResource> DataResourceDyn for ReadOnlyAdapter<T> {
     }
 }
 
+fn deserialize_value<T: DeserializeOwned>(value: Value) -> Result<T, DataError> {
+    serde_path_to_error::deserialize(value).map_err(|e| DataError::InvalidValue {
+        path: JsonPointer::from(&e).0,
+        message: e.into_inner().to_string(),
+    })
+}
+
 struct WriteOnlyAdapter<T>(T);
 
 #[async_trait]
 impl<T: WriteableDataResource> DataResourceDyn for WriteOnlyAdapter<T> {
     async fn read(&self) -> Result<Value, DataError> {
-        Err(DataError::Internal("resource is write-only".to_string()))
+        Err(DataError::WriteOnly)
     }
 
     async fn write(&self, value: Value) -> Result<(), DataError> {
-        let typed: T::Value =
-            serde_json::from_value(value).map_err(|e| DataError::Internal(e.to_string()))?;
+        let typed: T::Value = deserialize_value(value)?;
         WriteableDataResource::write(&self.0, &typed).await
     }
 }
@@ -93,8 +101,7 @@ impl<T: DataResource> DataResourceDyn for ReadWriteAdapter<T> {
     }
 
     async fn write(&self, value: Value) -> Result<(), DataError> {
-        let typed: <T as WriteableDataResource>::Value =
-            serde_json::from_value(value).map_err(|e| DataError::Internal(e.to_string()))?;
+        let typed: <T as WriteableDataResource>::Value = deserialize_value(value)?;
         WriteableDataResource::write(&self.0, &typed).await
     }
 }
@@ -228,7 +235,8 @@ impl DataProviderBuilder {
     /// Override the schema for the last added resource.
     ///
     /// Replaces the auto-derived schema entirely. Use this for complex
-    /// schemas that cannot be expressed with the builder methods.
+    /// schemas that cannot be expressed with the builder methods. The schema
+    /// must be JSON Schema 2020-12.
     #[must_use]
     pub fn schema(mut self, schema: impl Into<Value>) -> Self {
         if let Some(last) = self.resources.last_mut() {
@@ -278,7 +286,7 @@ impl BuiltDataProvider {
 
 #[async_trait]
 impl DataProvider for BuiltDataProvider {
-    async fn list(&self, filter: DataFilter) -> Result<Vec<Metadata>, DataError> {
+    async fn data_list(&self, filter: DataFilter) -> Result<Vec<Metadata>, DataError> {
         Ok(self
             .resources
             .values()
@@ -287,7 +295,7 @@ impl DataProvider for BuiltDataProvider {
             .collect())
     }
 
-    async fn read(&self, data_id: &str, include_schema: bool) -> Result<Data, DataError> {
+    async fn data_read(&self, data_id: &str, include_schema: bool) -> Result<Data, DataError> {
         let resource = self
             .find_resource(data_id)
             .ok_or_else(|| DataError::NotFound(data_id.to_string()))?;
@@ -304,7 +312,7 @@ impl DataProvider for BuiltDataProvider {
         })
     }
 
-    async fn write(&self, data_id: &str, value: Value) -> Result<(), DataError> {
+    async fn data_write(&self, data_id: &str, value: Value) -> Result<(), DataError> {
         let resource = self
             .find_resource(data_id)
             .ok_or_else(|| DataError::NotFound(data_id.to_string()))?;
@@ -312,7 +320,7 @@ impl DataProvider for BuiltDataProvider {
         resource.resource.write(value).await
     }
 
-    async fn categories(&self) -> Result<Vec<CategoryInfo>, DataError> {
+    async fn data_categories(&self) -> Result<Vec<CategoryInfo>, DataError> {
         let mut seen = HashSet::new();
         Ok(self
             .resources
@@ -325,7 +333,10 @@ impl DataProvider for BuiltDataProvider {
             .collect())
     }
 
-    async fn groups(&self, category_filter: Option<&str>) -> Result<Vec<GroupInfo>, DataError> {
+    async fn data_groups(
+        &self,
+        category_filter: Option<&str>,
+    ) -> Result<Vec<GroupInfo>, DataError> {
         let mut seen = HashSet::new();
         Ok(self
             .resources
@@ -349,7 +360,7 @@ impl DataProvider for BuiltDataProvider {
             .collect())
     }
 
-    async fn tags(&self) -> Result<Vec<TagInfo>, DataError> {
+    async fn data_tags(&self) -> Result<Vec<TagInfo>, DataError> {
         let mut seen = HashSet::new();
         Ok(self
             .resources
@@ -366,7 +377,6 @@ impl DataProvider for BuiltDataProvider {
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use serde_json::json;
 
@@ -385,7 +395,7 @@ mod tests {
             .build()
             .unwrap();
 
-        let result = provider.read("sw.version", false).await.unwrap();
+        let result = provider.data_read("sw.version", false).await.unwrap();
         assert_eq!(result.data, json!({"value": "1.0.0"}));
         assert!(result.schema.is_none());
     }
@@ -402,7 +412,7 @@ mod tests {
             .build()
             .unwrap();
 
-        let result = provider.read("sw.version", true).await.unwrap();
+        let result = provider.data_read("sw.version", true).await.unwrap();
         assert_eq!(result.data, json!({"value": "1.0.0"}));
         assert!(result.schema.is_some());
     }
@@ -426,7 +436,7 @@ mod tests {
             .build()
             .unwrap();
 
-        let items = provider.list(DataFilter::default()).await.unwrap();
+        let items = provider.data_list(DataFilter::default()).await.unwrap();
         assert_eq!(items.len(), 2);
     }
 
@@ -452,7 +462,7 @@ mod tests {
             scope: Some(DataScope::Categories(vec!["identData".to_string()])),
             tags: vec![],
         };
-        let items = provider.list(filter).await.unwrap();
+        let items = provider.data_list(filter).await.unwrap();
         assert_eq!(items.len(), 1);
         assert_eq!(items.first().map(|m| m.id.as_str()), Some("sw.version"));
     }
@@ -480,7 +490,7 @@ mod tests {
             scope: None,
             tags: vec!["monitoring".to_string()],
         };
-        let items = provider.list(filter).await.unwrap();
+        let items = provider.data_list(filter).await.unwrap();
         assert_eq!(items.len(), 1);
         assert_eq!(items.first().map(|m| m.id.as_str()), Some("system.uptime"));
     }
@@ -509,7 +519,7 @@ mod tests {
             scope: Some(DataScope::Groups(vec!["info".to_string()])),
             tags: vec![],
         };
-        let items = provider.list(filter).await.unwrap();
+        let items = provider.data_list(filter).await.unwrap();
         assert_eq!(items.len(), 1);
         assert_eq!(items.first().map(|m| m.id.as_str()), Some("sw.version"));
     }
@@ -518,7 +528,7 @@ mod tests {
     async fn test_not_found() {
         let provider = DataProviderBuilder::new().build().unwrap();
 
-        let result = provider.read("nonexistent", false).await;
+        let result = provider.data_read("nonexistent", false).await;
         assert!(matches!(result, Err(DataError::NotFound(_))));
     }
 
@@ -535,9 +545,56 @@ mod tests {
             .unwrap();
 
         let result = provider
-            .write("sw.version", json!({"value": "2.0.0"}))
+            .data_write("sw.version", json!({"value": "2.0.0"}))
             .await;
         assert!(matches!(result, Err(DataError::ReadOnly)));
+    }
+
+    #[tokio::test]
+    async fn test_write_only_read_fails() {
+        struct Volume;
+
+        #[async_trait]
+        impl WriteableDataResource for Volume {
+            type Value = u8;
+
+            async fn write(&self, _value: &u8) -> Result<(), DataError> {
+                Ok(())
+            }
+        }
+
+        let provider = DataProviderBuilder::new()
+            .write_data("volume", "Volume", &DataCategory::StoredData, Volume)
+            .build()
+            .unwrap();
+
+        let result = provider.data_read("volume", false).await;
+        assert!(matches!(result, Err(DataError::WriteOnly)));
+    }
+
+    #[tokio::test]
+    async fn test_write_of_wrong_type_is_invalid_value() {
+        struct Level;
+
+        #[async_trait]
+        impl WriteableDataResource for Level {
+            type Value = Vec<u8>;
+
+            async fn write(&self, _value: &Vec<u8>) -> Result<(), DataError> {
+                Ok(())
+            }
+        }
+
+        let provider = DataProviderBuilder::new()
+            .write_data("level", "Level", &DataCategory::StoredData, Level)
+            .build()
+            .unwrap();
+
+        assert!(provider.data_write("level", json!([7])).await.is_ok());
+        let result = provider.data_write("level", json!([7, "high"])).await;
+        assert!(matches!(result, Err(DataError::InvalidValue { path, .. }) if path == "/1"));
+        let result = provider.data_write("level", json!("high")).await;
+        assert!(matches!(result, Err(DataError::InvalidValue { path, .. }) if path.is_empty()));
     }
 
     #[tokio::test]
@@ -564,7 +621,7 @@ mod tests {
             .build()
             .unwrap();
 
-        let categories = provider.categories().await.unwrap();
+        let categories = provider.data_categories().await.unwrap();
         assert_eq!(categories.len(), 2);
         assert_eq!(categories[0].category, "identData");
         assert_eq!(categories[1].category, "sysInfo");
@@ -591,11 +648,11 @@ mod tests {
             .unwrap();
 
         // All groups
-        let groups = provider.groups(None).await.unwrap();
+        let groups = provider.data_groups(None).await.unwrap();
         assert_eq!(groups.len(), 3);
 
         // Filter by category
-        let groups = provider.groups(Some("identData")).await.unwrap();
+        let groups = provider.data_groups(Some("identData")).await.unwrap();
         assert_eq!(groups.len(), 2);
         assert!(groups.iter().all(|g| g.category == "identData"));
     }
@@ -620,7 +677,7 @@ mod tests {
             .build()
             .unwrap();
 
-        let tags = provider.tags().await.unwrap();
+        let tags = provider.data_tags().await.unwrap();
         assert_eq!(tags.len(), 3);
         let tag_ids: Vec<&str> = tags.iter().map(|t| t.id.as_str()).collect();
         assert!(tag_ids.contains(&"info"));

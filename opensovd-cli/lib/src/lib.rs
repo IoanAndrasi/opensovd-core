@@ -3,8 +3,6 @@
 
 //! Shared CLI utilities for `OpenSOVD` binaries.
 
-pub mod trace;
-
 use std::fmt;
 use std::path::Path;
 
@@ -77,7 +75,10 @@ const TARGET: &str = "srv";
 /// # Panics
 ///
 /// Panics if the `SIGTERM` signal handler cannot be installed (Unix only).
-#[allow(clippy::expect_used)] // Panic on signal handler failure is intentional.
+#[expect(
+    clippy::expect_used,
+    reason = "panic on signal handler failure is intentional"
+)]
 pub async fn shutdown_signal() {
     #[cfg(unix)]
     let sigterm = async {
@@ -102,7 +103,7 @@ fn env_filter(default_filter: &str) -> tracing_subscriber::EnvFilter {
 /// Initialize tracing with `CompactFormat` and `EnvFilter`.
 ///
 /// Uses `RUST_LOG` if set, otherwise falls back to `default_filter`.
-/// Output goes to stderr by default; pass a `log_file` path to write
+/// Output goes to stdout by default; pass a `log_file` path to write
 /// to a file instead (useful for stdio-based protocols like MCP).
 ///
 /// # Errors
@@ -138,7 +139,7 @@ mod tests {
 
     #[cfg(unix)]
     #[tokio::test]
-    #[allow(unsafe_code)]
+    #[expect(unsafe_code)]
     async fn shutdown_signal_responds_to_sigterm() {
         use std::time::Duration;
 
@@ -151,7 +152,7 @@ mod tests {
 
     #[cfg(unix)]
     #[tokio::test]
-    #[allow(unsafe_code)]
+    #[expect(unsafe_code)]
     async fn shutdown_signal_responds_to_sigint() {
         use std::time::Duration;
 

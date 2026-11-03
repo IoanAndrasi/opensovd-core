@@ -3,17 +3,31 @@
 
 //! Core types for SOVD topology and data access.
 
-#![cfg_attr(all(test, coverage_nightly), feature(coverage_attribute))]
-
+mod bulkdata;
 mod data;
-mod discovery;
 mod entity;
+mod log;
 mod topology;
+mod updates;
 
+pub use bulkdata::{
+    BulkData, BulkDataError, BulkDataMetadata, BulkDataProvider, CategoryFilter,
+    DeletedBulkDataItem,
+};
 pub use data::{
     CategoryInfo, Data, DataError, DataFilter, DataProvider, DataScope, GroupInfo, Metadata,
     TagInfo,
 };
-pub use discovery::{DiscoveryError, DiscoveryProvider, DiscoveryStream};
-pub use entity::{App, Area, Component, EntityCollection, EntityKind, EntityRef};
+pub use entity::{
+    App, AppPath, Area, AreaPath, Component, ComponentPath, EntityKind, EntityPath, EntityRef,
+    FunctionPath, InvalidPath,
+};
+pub use log::{
+    LogConfiguration, LogContext, LogEntry, LogError, LogFilter, LogProvider, LogResult,
+    LogSeverity, LogStream,
+};
 pub use topology::{Topology, TopologyError, TopologyEvent, TopologyReadGuard, TopologyWriteGuard};
+pub use updates::{
+    FromModel, Phase, Status, ToModel, UpdateDescriptor, UpdateError, UpdateFeedback,
+    UpdateProvider, Updates,
+};

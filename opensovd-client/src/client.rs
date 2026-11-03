@@ -10,6 +10,7 @@ use hyper_util::{
     client::legacy::{self, connect::HttpConnector},
     rt::TokioExecutor,
 };
+use opensovd_models::UriReference;
 use serde::{Serialize, de::DeserializeOwned};
 use thiserror::Error;
 use tokio::sync::OnceCell;
@@ -120,7 +121,7 @@ impl<Conn, Layers> ClientBuilder<Conn, Layers> {
     /// Returns [`BuilderError::NoBaseUri`] if the base URI has not been set.
     pub fn build<ResBody>(self) -> std::result::Result<Client, BuilderError>
     where
-        Conn: hyper_util::client::legacy::connect::Connect + Clone + Send + Sync + 'static,
+        Conn: legacy::connect::Connect + Clone + Send + Sync + 'static,
         Layers: Layer<legacy::Client<Conn, Full<Bytes>>> + Clone + Send + Sync + 'static,
         Layers::Service: Service<http::Request<Full<Bytes>>, Response = http::Response<ResBody>>
             + Clone
@@ -161,7 +162,7 @@ impl<Conn, Layers> ClientBuilder<Conn, Layers> {
     /// Returns [`BuilderError::NoBaseUri`] if the base URI has not been set.
     pub fn discovery<ResBody>(self) -> std::result::Result<Discovery, BuilderError>
     where
-        Conn: hyper_util::client::legacy::connect::Connect + Clone + Send + Sync + 'static,
+        Conn: legacy::connect::Connect + Clone + Send + Sync + 'static,
         Layers: Layer<legacy::Client<Conn, Full<Bytes>>> + Clone + Send + Sync + 'static,
         Layers::Service: Service<http::Request<Full<Bytes>>, Response = http::Response<ResBody>>
             + Clone
@@ -293,10 +294,19 @@ impl Client {
 
     /// GET a JSON resource at `path` (relative to the base URI) with optional query parameters.
     pub async fn get<T: DeserializeOwned>(&self, path: &str, query: &[(&str, &str)]) -> Result<T> {
-        let uri = build_uri_with_query(&self.base_uri, path, query)?;
+        self.get_uri(build_uri_with_query(&self.base_uri, path, query)?)
+            .await
+    }
+
+    /// GET the JSON resource at an href the server advertised.
+    pub(crate) async fn follow<T: DeserializeOwned>(&self, href: &UriReference) -> Result<T> {
+        self.get_uri(href.0.parse()?).await
+    }
+
+    async fn get_uri<T: DeserializeOwned>(&self, uri: http::Uri) -> Result<T> {
         let req = http::Request::builder()
             .method(http::Method::GET)
-            .uri(&uri)
+            .uri(uri)
             .body(Full::new(Bytes::new()))?;
         let bytes = self.request(req).await?;
         Ok(serde_json::from_slice(&bytes)?)
@@ -339,8 +349,8 @@ impl Client {
                 .map_err(|e| Error::Service { source: e })?
                 .to_bytes();
             if !status.is_success() {
-                let error = serde_json::from_slice(&body).ok();
-                return Err(Error::ApiError { status, error });
+                let details = serde_json::from_slice(&body).ok();
+                return Err(Error::ApiError { status, details });
             }
             Ok(body)
         };
@@ -409,7 +419,6 @@ pub(crate) fn encode(segment: &str) -> String {
 }
 
 /// Build a URI by appending a path and optional query parameters to a base URI.
-#[allow(clippy::result_large_err)]
 pub(crate) fn build_uri_with_query(
     base_uri: &http::Uri,
     path: &str,

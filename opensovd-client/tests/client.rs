@@ -1,6 +1,5 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 Contributors to the Eclipse Foundation
 // SPDX-License-Identifier: Apache-2.0
-#![allow(clippy::expect_used)]
 
 mod common;
 
@@ -20,7 +19,7 @@ async fn percent_encodes_path_segments() {
         .unwrap();
     let client = mock_client(builder.build());
     let result = client.component("ecu/1").list_data().send().await.unwrap();
-    assert!(result.data.items.is_empty());
+    assert!(result.items.is_empty());
 }
 
 #[tokio::test]
@@ -41,9 +40,12 @@ async fn http_error_status() {
     let client = mock_client(builder.build());
     let err = client.list_components().send().await.unwrap_err();
     match err {
-        opensovd_client::Error::ApiError { status, error } => {
+        opensovd_client::Error::ApiError { status, details } => {
             assert_eq!(status.as_u16(), 404);
-            assert!(error.is_some());
+            assert!(matches!(
+                details,
+                Some(opensovd_client::ErrorDetails::Generic(_))
+            ));
         }
         other => panic!("unexpected error: {other:?}"),
     }
@@ -69,7 +71,7 @@ async fn with_layer_builds_client() {
         .expect("valid test client with layer");
 
     let list = client.list_components().send().await.unwrap();
-    assert!(list.data.items.is_empty());
+    assert!(list.items.is_empty());
 }
 
 // TODO: Add tests for hyper-timeout (https://github.com/hjr3/hyper-timeout)
@@ -174,6 +176,6 @@ async fn backpressure_layer_does_not_panic() {
 
     for _ in 0..2 {
         let list = client.list_components().send().await.unwrap();
-        assert!(list.data.items.is_empty());
+        assert!(list.items.is_empty());
     }
 }

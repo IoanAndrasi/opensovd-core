@@ -5,19 +5,26 @@
 
 use std::collections::HashMap;
 use std::fmt;
+use std::sync::Arc;
 
+use crate::bulkdata::BulkDataProvider;
 use crate::data::DataProvider;
 use crate::entity::EntityRef;
+use crate::log::LogProvider;
+use crate::{FromModel, ToModel, UpdateDescriptor, UpdateProvider, Updates};
 
 pub struct App {
     entity_ref: EntityRef,
     name: String,
-    is_located_on: String,
+    component_id: Option<String>,
     area_id: Option<String>,
     metadata: HashMap<String, String>,
     tags: Vec<String>,
     translation_id: Option<String>,
     data_provider: Option<Box<dyn DataProvider>>,
+    bulkdata_provider: Option<Arc<dyn BulkDataProvider>>,
+    log_provider: Option<Arc<dyn LogProvider>>,
+    update_provider: Option<Updates>,
 }
 
 impl fmt::Debug for App {
@@ -25,33 +32,40 @@ impl fmt::Debug for App {
         f.debug_struct("App")
             .field("entity_ref", &self.entity_ref)
             .field("name", &self.name)
-            .field("is_located_on", &self.is_located_on)
+            .field("component_id", &self.component_id)
             .field("area_id", &self.area_id)
             .field("metadata", &self.metadata)
             .field("tags", &self.tags)
             .field("translation_id", &self.translation_id)
             .field("data_provider", &self.data_provider.as_ref().map(|_| "..."))
+            .field(
+                "bulkdata_provider",
+                &self.bulkdata_provider.as_ref().map(|_| "..."),
+            )
+            .field("log_provider", &self.log_provider.as_ref().map(|_| "..."))
+            .field(
+                "update_provider",
+                &self.update_provider.as_ref().map(|_| "..."),
+            )
             .finish()
     }
 }
 
 impl App {
     #[must_use]
-    pub fn new(
-        id: impl Into<String>,
-        name: impl Into<String>,
-        is_located_on: impl Into<String>,
-    ) -> Self {
-        let id_str = id.into();
+    pub fn new(id: impl Into<String>, name: impl Into<String>) -> Self {
         Self {
-            entity_ref: EntityRef::app(&id_str),
+            entity_ref: EntityRef::app(id),
             name: name.into(),
-            is_located_on: is_located_on.into(),
+            component_id: None,
             area_id: None,
             metadata: HashMap::new(),
             tags: Vec::new(),
             translation_id: None,
             data_provider: None,
+            bulkdata_provider: None,
+            log_provider: None,
+            update_provider: None,
         }
     }
 
@@ -80,8 +94,47 @@ impl App {
     }
 
     #[must_use]
+    pub fn with_bulkdata_provider(mut self, provider: impl BulkDataProvider) -> Self {
+        self.bulkdata_provider = Some(Arc::new(provider));
+        self
+    }
+
+    #[must_use]
+    pub fn with_log_provider(mut self, provider: impl LogProvider) -> Self {
+        self.log_provider = Some(Arc::new(provider));
+        self
+    }
+
+    #[must_use]
+    pub fn with_update_provider<
+        UpdateImpl: UpdateDescriptor + FromModel<UpdateModel> + 'static,
+        UpdateModel: 'static,
+        FeedbackImpl: ToModel<FeedbackModel> + 'static,
+        FeedbackModel: 'static,
+    >(
+        mut self,
+        provider: impl UpdateProvider,
+    ) -> Self {
+        self.update_provider = Some(Updates::new::<
+            UpdateImpl,
+            UpdateModel,
+            FeedbackImpl,
+            FeedbackModel,
+        >(provider));
+        self
+    }
+
+    #[must_use]
     pub fn with_area_id(mut self, area_id: impl Into<String>) -> Self {
         self.area_id = Some(area_id.into());
+        self
+    }
+
+    /// Records the component this app is located on, the SOVD
+    /// "is-located-on" relationship.
+    #[must_use]
+    pub fn with_component_id(mut self, component_id: impl Into<String>) -> Self {
+        self.component_id = Some(component_id.into());
         self
     }
 }
@@ -97,9 +150,11 @@ impl App {
         &self.name
     }
 
+    /// Returns the id of the hosting component for the SOVD "is-located-on"
+    /// relationship, or `None` if the app is not located on one.
     #[must_use]
     pub fn component_id(&self) -> Option<&str> {
-        Some(&self.is_located_on)
+        self.component_id.as_deref()
     }
 
     #[must_use]
@@ -120,6 +175,21 @@ impl App {
     #[must_use]
     pub fn data_provider(&self) -> Option<&dyn DataProvider> {
         self.data_provider.as_deref()
+    }
+
+    #[must_use]
+    pub fn bulkdata_provider(&self) -> Option<Arc<dyn BulkDataProvider>> {
+        self.bulkdata_provider.clone()
+    }
+
+    #[must_use]
+    pub fn log_provider(&self) -> Option<Arc<dyn LogProvider>> {
+        self.log_provider.clone()
+    }
+
+    #[must_use]
+    pub fn updates(&self) -> Option<Updates> {
+        self.update_provider.clone()
     }
 
     #[must_use]

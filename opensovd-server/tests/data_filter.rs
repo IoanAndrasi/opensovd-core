@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 Contributors to the Eclipse Foundation
 // SPDX-License-Identifier: Apache-2.0
 
-#![allow(clippy::unwrap_used, clippy::expect_used)]
+#![expect(clippy::unwrap_used)]
 
 //! End-to-end coverage for the SOVD data filter on the data list endpoint.
 //!
@@ -29,16 +29,16 @@ struct RecordingProvider {
 
 #[async_trait]
 impl DataProvider for RecordingProvider {
-    async fn list(&self, filter: DataFilter) -> Result<Vec<Metadata>, DataError> {
+    async fn data_list(&self, filter: DataFilter) -> Result<Vec<Metadata>, DataError> {
         *self.seen.lock().unwrap() = Some(filter);
         Ok(Vec::new())
     }
 
-    async fn read(&self, data_id: &str, _include_schema: bool) -> Result<Data, DataError> {
+    async fn data_read(&self, data_id: &str, _include_schema: bool) -> Result<Data, DataError> {
         Err(DataError::NotFound(data_id.into()))
     }
 
-    async fn write(&self, _data_id: &str, _value: serde_json::Value) -> Result<(), DataError> {
+    async fn data_write(&self, _data_id: &str, _value: serde_json::Value) -> Result<(), DataError> {
         Err(DataError::ReadOnly)
     }
 }
@@ -132,7 +132,7 @@ async fn data_list_without_filter_is_empty() {
 
     let filter = seen.lock().unwrap().clone().expect("provider was listed");
     assert!(filter.scope.is_none());
-    assert!(filter.tags.is_empty());
+    assert_eq!(filter.tags, Vec::<String>::new());
 }
 
 #[tokio::test]

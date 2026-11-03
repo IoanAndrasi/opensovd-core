@@ -3,13 +3,11 @@
 
 //! Server builder and listener types.
 
-use std::future::Future;
 use std::pin::Pin;
 
 use axum::Router;
 use futures::future::{FutureExt, Shared};
-use futures::stream::StreamExt;
-use opensovd_core::{DiscoveryProvider, EntityKind, Topology};
+use opensovd_core::Topology;
 use serde::Serialize;
 use thiserror::Error;
 use tokio::net::TcpListener;
@@ -20,9 +18,7 @@ use tower::ServiceExt;
 use tower::layer::util::{Identity, Stack};
 use tower::util::BoxCloneSyncService;
 
-use crate::auth::{
-    AllowAll, AuthenticationLayer, Authenticator, AuthorizationLayer, Authorizer, NoAuth,
-};
+use crate::auth::Auth;
 use crate::connect_info::ConnectInfo;
 use crate::routes::VendorInfo;
 
@@ -32,9 +28,18 @@ pub(crate) type Service = BoxCloneSyncService<
     std::convert::Infallible,
 >;
 
+/// Base URI as configured on the builder: the mount path, plus the scheme when
+/// one was supplied.
+#[derive(Clone, Default)]
+struct BaseConfig {
+    path: String,
+    scheme: Option<String>,
+}
+
 fn normalize_base(base: &str) -> Option<String> {
+    let base = base.trim_end_matches('/');
     match base.as_bytes() {
-        b"" | b"/" => None,
+        b"" => None,
         [b'/', ..] => Some(base.to_string()),
         _ => Some(format!("/{base}")),
     }
@@ -93,12 +98,11 @@ impl From<UnixListener> for Listener {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-fn build_router<Vendor, Authn, Authz, Layer>(
+fn build_router<Vendor, Layer>(
     base: Option<&str>,
+    advertised: crate::routes::BaseUri,
     vendor_info: Option<Vendor>,
-    authenticator: Authn,
-    authorizer: Authz,
+    auth: Option<Auth>,
     topology: Topology,
     layer: Layer,
     services: Vec<(String, Service)>,
@@ -106,8 +110,6 @@ fn build_router<Vendor, Authn, Authz, Layer>(
 where
     Vendor: Serialize + Clone + Send + Sync + 'static,
     crate::routes::VersionInfo<Vendor>: crate::schema::JsonSchema,
-    Authn: Authenticator,
-    Authz: Authorizer<Authn::Identity>,
     Layer: tower::Layer<axum::routing::Route> + Clone + Send + Sync + 'static,
     Layer::Service: TowerService<http::Request<axum::body::Body>> + Clone + Send + Sync + 'static,
     <Layer::Service as TowerService<http::Request<axum::body::Body>>>::Response:
@@ -120,58 +122,55 @@ where
     let mut router = match base {
         Some(path) => Router::new().nest(path, inner),
         None => Router::new().merge(inner),
-    };
+    }
+    .fallback(crate::routes::not_found)
+    .layer(axum::Extension(advertised));
 
     for (path, svc) in services {
         router = router.nest_service(&path, svc);
     }
 
-    // Apply layers (order matters - last applied is outermost)
-    // Request flow: UserLayer -> AuthN -> AuthZ -> Handler
-    let router = router
-        .layer(AuthorizationLayer::<Authz, Authn::Identity>::new(
-            authorizer,
-        ))
-        .layer(AuthenticationLayer::new(authenticator));
-
-    // User layers are outermost
+    // Request flow: UserLayer -> Auth -> Handler
+    let router = match auth {
+        Some(auth) => auth.apply(router, base),
+        None => router,
+    };
     router.layer(layer)
 }
 
 type ShutdownFuture = Shared<Pin<Box<dyn Future<Output = ()> + Send>>>;
 
 #[must_use]
-pub struct ServerBuilder<Vendor = VendorInfo, Authn = NoAuth, Authz = AllowAll, Layer = Identity> {
+pub struct ServerBuilder<Vendor = VendorInfo, Layer = Identity> {
     listener: Option<Listener>,
-    base: String,
+    base: BaseConfig,
     shutdown: ShutdownFuture,
     vendor_info: Option<Vendor>,
-    authenticator: Authn,
-    authorizer: Authz,
+    auth: Option<Auth>,
     topology: Topology,
-    discovery_providers: Vec<Box<dyn DiscoveryProvider>>,
     layer: Layer,
     services: Vec<(String, Service)>,
     #[cfg(feature = "tls")]
     tls_config: Option<rustls::ServerConfig>,
 }
 
-pub struct Server<Vendor = VendorInfo, Authn = NoAuth, Authz = AllowAll, Layer = Identity> {
+pub struct Server<Vendor = VendorInfo, Layer = Identity> {
     listener: Listener,
-    base: String,
+    base: BaseConfig,
     shutdown: ShutdownFuture,
     vendor_info: Option<Vendor>,
-    authenticator: Authn,
-    authorizer: Authz,
+    auth: Option<Auth>,
     topology: Topology,
-    discovery_providers: Vec<Box<dyn DiscoveryProvider>>,
     layer: Layer,
     services: Vec<(String, Service)>,
     #[cfg(feature = "tls")]
     tls_config: Option<rustls::ServerConfig>,
 }
 
-#[allow(clippy::expect_used)] // Panic on signal handler failure is intentional
+#[expect(
+    clippy::expect_used,
+    reason = "panic on signal handler failure is intentional"
+)]
 async fn default_shutdown_signal() {
     #[cfg(unix)]
     let sigterm = async {
@@ -189,22 +188,20 @@ async fn default_shutdown_signal() {
     }
 }
 
-impl ServerBuilder<VendorInfo, NoAuth, AllowAll, Identity> {
+impl ServerBuilder<VendorInfo, Identity> {
     fn new() -> Self {
         let shutdown: Pin<Box<dyn Future<Output = ()> + Send>> =
             Box::pin(default_shutdown_signal());
         Self {
             listener: None,
-            base: String::new(),
+            base: BaseConfig::default(),
             shutdown: shutdown.shared(),
             vendor_info: Some(VendorInfo {
                 version: env!("CARGO_PKG_VERSION").into(),
                 name: "OpenSOVD".into(),
             }),
-            authenticator: NoAuth,
-            authorizer: AllowAll,
+            auth: None,
             topology: Topology::default(),
-            discovery_providers: Vec::new(),
             layer: Identity::new(),
             services: Vec::new(),
             #[cfg(feature = "tls")]
@@ -213,23 +210,26 @@ impl ServerBuilder<VendorInfo, NoAuth, AllowAll, Identity> {
     }
 }
 
-impl<Vendor, Authn, Authz, Layer> ServerBuilder<Vendor, Authn, Authz, Layer> {
+impl<Vendor, Layer> ServerBuilder<Vendor, Layer> {
     pub fn listener(mut self, listener: impl Into<Listener>) -> Self {
         self.listener = Some(listener.into());
         self
     }
 
-    /// Set the base URI path for all SOVD routes.
+    /// Set the base URI for all SOVD routes.
+    ///
+    /// The path determines where the routes are mounted. A scheme, if given, is
+    /// the one advertised in generated URIs; local TLS takes precedence over it.
     ///
     /// # Errors
     ///
     /// Returns an error if the URI is malformed.
-    pub fn base_uri(
-        mut self,
-        uri: impl TryInto<http::Uri>,
-    ) -> std::result::Result<Self, BuilderError> {
+    pub fn base_uri(mut self, uri: impl TryInto<http::Uri>) -> Result<Self, BuilderError> {
         let uri: http::Uri = uri.try_into().map_err(|_| BuilderError::InvalidUri)?;
-        self.base = uri.path().to_string();
+        self.base = BaseConfig {
+            path: uri.path().to_string(),
+            scheme: uri.scheme_str().map(str::to_string),
+        };
         Ok(self)
     }
 
@@ -242,19 +242,14 @@ impl<Vendor, Authn, Authz, Layer> ServerBuilder<Vendor, Authn, Authz, Layer> {
         self
     }
 
-    pub fn vendor_info<NewVendor>(
-        self,
-        vendor_info: NewVendor,
-    ) -> ServerBuilder<NewVendor, Authn, Authz, Layer> {
+    pub fn vendor_info<NewVendor>(self, vendor_info: NewVendor) -> ServerBuilder<NewVendor, Layer> {
         ServerBuilder {
             listener: self.listener,
             base: self.base,
             shutdown: self.shutdown,
             vendor_info: Some(vendor_info),
-            authenticator: self.authenticator,
-            authorizer: self.authorizer,
+            auth: self.auth,
             topology: self.topology,
-            discovery_providers: self.discovery_providers,
             layer: self.layer,
             services: self.services,
             #[cfg(feature = "tls")]
@@ -262,68 +257,23 @@ impl<Vendor, Authn, Authz, Layer> ServerBuilder<Vendor, Authn, Authz, Layer> {
         }
     }
 
-    /// Set the authenticator for request authentication.
-    pub fn authenticator<NewAuthn: Authenticator>(
-        self,
-        authenticator: NewAuthn,
-    ) -> ServerBuilder<Vendor, NewAuthn, Authz, Layer> {
-        ServerBuilder {
-            listener: self.listener,
-            base: self.base,
-            shutdown: self.shutdown,
-            vendor_info: self.vendor_info,
-            authenticator,
-            authorizer: self.authorizer,
-            topology: self.topology,
-            discovery_providers: self.discovery_providers,
-            layer: self.layer,
-            services: self.services,
-            #[cfg(feature = "tls")]
-            tls_config: self.tls_config,
-        }
-    }
-
-    /// Set the authorizer for request authorization.
-    pub fn authorizer<NewAuthz>(
-        self,
-        authorizer: NewAuthz,
-    ) -> ServerBuilder<Vendor, Authn, NewAuthz, Layer>
-    where
-        NewAuthz: Authorizer<Authn::Identity>,
-        Authn: Authenticator,
-    {
-        ServerBuilder {
-            listener: self.listener,
-            base: self.base,
-            shutdown: self.shutdown,
-            vendor_info: self.vendor_info,
-            authenticator: self.authenticator,
-            authorizer,
-            topology: self.topology,
-            discovery_providers: self.discovery_providers,
-            layer: self.layer,
-            services: self.services,
-            #[cfg(feature = "tls")]
-            tls_config: self.tls_config,
-        }
+    /// Check every request with `auth`. Without it, all requests are allowed.
+    pub fn auth(mut self, auth: Auth) -> Self {
+        self.auth = Some(auth);
+        self
     }
 
     /// Add a Tower layer to the server middleware stack.
     ///
     /// Layers are applied outside auth. The first layer added is the outermost.
-    pub fn layer<NewLayer>(
-        self,
-        layer: NewLayer,
-    ) -> ServerBuilder<Vendor, Authn, Authz, Stack<NewLayer, Layer>> {
+    pub fn layer<NewLayer>(self, layer: NewLayer) -> ServerBuilder<Vendor, Stack<NewLayer, Layer>> {
         ServerBuilder {
             listener: self.listener,
             base: self.base,
             shutdown: self.shutdown,
             vendor_info: self.vendor_info,
-            authenticator: self.authenticator,
-            authorizer: self.authorizer,
+            auth: self.auth,
             topology: self.topology,
-            discovery_providers: self.discovery_providers,
             layer: Stack::new(layer, self.layer),
             services: self.services,
             #[cfg(feature = "tls")]
@@ -336,7 +286,10 @@ impl<Vendor, Authn, Authz, Layer> ServerBuilder<Vendor, Authn, Authz, Layer> {
         self
     }
 
-    /// Register a tower service at the given path.
+    /// Register a tower service at the given absolute path. A service at a
+    /// path the API routes, such as `{base}/v1/components`, makes
+    /// [`Server::serve`] panic. A service below an entity, such as
+    /// `{base}/v1/components/ecu/docs`, answers that path instead of the API.
     pub fn service<S, ResBody>(mut self, path: &str, svc: S) -> Self
     where
         S: TowerService<
@@ -359,15 +312,6 @@ impl<Vendor, Authn, Authz, Layer> ServerBuilder<Vendor, Authn, Authz, Layer> {
         self
     }
 
-    /// Register a discovery provider for streaming entity discovery.
-    ///
-    /// Multiple providers can be registered; their streams are merged at
-    /// runtime and events are applied to the shared topology.
-    pub fn discovery(mut self, provider: Box<dyn DiscoveryProvider>) -> Self {
-        self.discovery_providers.push(provider);
-        self
-    }
-
     // wrap the TCP listener with TLS.
     #[cfg(feature = "tls")]
     pub fn tls(mut self, config: rustls::ServerConfig) -> Self {
@@ -380,16 +324,14 @@ impl<Vendor, Authn, Authz, Layer> ServerBuilder<Vendor, Authn, Authz, Layer> {
     /// # Errors
     ///
     /// Returns an error if the listener has not been set.
-    pub fn build(self) -> Result<Server<Vendor, Authn, Authz, Layer>, BuilderError> {
+    pub fn build(self) -> Result<Server<Vendor, Layer>, BuilderError> {
         Ok(Server {
             listener: self.listener.ok_or(BuilderError::NoListener)?,
             base: self.base,
             shutdown: self.shutdown,
             vendor_info: self.vendor_info,
-            authenticator: self.authenticator,
-            authorizer: self.authorizer,
+            auth: self.auth,
             topology: self.topology,
-            discovery_providers: self.discovery_providers,
             layer: self.layer,
             services: self.services,
             #[cfg(feature = "tls")]
@@ -404,69 +346,10 @@ impl Server {
     }
 }
 
-async fn run_discovery(
-    topology: Topology,
-    providers: Vec<Box<dyn DiscoveryProvider>>,
-    shutdown: ShutdownFuture,
-) {
-    let mut streams = Vec::new();
-    for provider in providers {
-        match provider.discover().await {
-            Ok(stream) => streams.push(stream),
-            Err(e) => {
-                tracing::error!(target: "discovery", error = %e, "Failed to start discovery provider");
-            }
-        }
-    }
-    if streams.is_empty() {
-        return;
-    }
-
-    let mut merged = futures::stream::select_all(streams);
-    let process_events = async {
-        while let Some(event) = merged.next().await {
-            match event {
-                Ok((remove, add)) => {
-                    let mut t = topology.write().await;
-                    for r in &remove {
-                        match r.kind() {
-                            EntityKind::Component => t.remove_component(r.id()),
-                            EntityKind::App => t.remove_app(r.id()),
-                            EntityKind::Area => t.remove_area(r.id()),
-                        }
-                    }
-                    for c in add.components {
-                        t.add_component(c);
-                    }
-                    for a in add.apps {
-                        t.add_app(a);
-                    }
-                    for a in add.areas {
-                        t.add_area(a);
-                    }
-                }
-                Err(e) => {
-                    tracing::error!(target: "discovery", error = %e, "Discovery stream error");
-                }
-            }
-        }
-    };
-    tokio::select! {
-        () = process_events => {
-            tracing::debug!(target: "discovery", "All discovery streams ended");
-        }
-        () = shutdown => {
-            tracing::debug!(target: "discovery", "Shutting down");
-        }
-    }
-}
-
-impl<Vendor, Authn, Authz, Layer> Server<Vendor, Authn, Authz, Layer>
+impl<Vendor, Layer> Server<Vendor, Layer>
 where
     Vendor: Serialize + Clone + Send + Sync + 'static,
     crate::routes::VersionInfo<Vendor>: crate::schema::JsonSchema,
-    Authn: Authenticator,
-    Authz: Authorizer<Authn::Identity>,
     Layer: tower::Layer<axum::routing::Route> + Clone + Send + Sync + 'static,
     Layer::Service: TowerService<http::Request<axum::body::Body>> + Clone + Send + Sync + 'static,
     <Layer::Service as TowerService<http::Request<axum::body::Body>>>::Response:
@@ -481,19 +364,30 @@ where
     ///
     /// Returns an error if the server cannot be started.
     pub async fn serve(self) -> std::io::Result<()> {
-        let base = normalize_base(&self.base);
+        let base = normalize_base(&self.base.path);
 
-        if !self.discovery_providers.is_empty() {
-            let topology = self.topology.clone();
-            let shutdown = self.shutdown.clone();
-            tokio::spawn(run_discovery(topology, self.discovery_providers, shutdown));
-        }
+        // local TLS wins over a configured scheme, which in turn wins over http
+        #[cfg(feature = "tls")]
+        let is_tls = self.tls_config.is_some();
+        #[cfg(not(feature = "tls"))]
+        let is_tls = false;
+        let advertised = crate::routes::BaseUri {
+            scheme: if is_tls {
+                "https".to_string()
+            } else {
+                self.base
+                    .scheme
+                    .clone()
+                    .unwrap_or_else(|| "http".to_string())
+            },
+            path: base.clone().unwrap_or_default(),
+        };
 
         let router = build_router(
             base.as_deref(),
+            advertised,
             self.vendor_info,
-            self.authenticator,
-            self.authorizer,
+            self.auth,
             self.topology,
             self.layer,
             self.services,
@@ -555,8 +449,6 @@ where
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
-#[allow(clippy::string_slice)]
 mod tests {
     use super::*;
 
@@ -564,8 +456,11 @@ mod tests {
     fn test_normalize_base() {
         assert_eq!(normalize_base(""), None);
         assert_eq!(normalize_base("/"), None);
+        assert_eq!(normalize_base("//"), None);
         assert_eq!(normalize_base("/sovd"), Some("/sovd".to_string()));
+        assert_eq!(normalize_base("/sovd/"), Some("/sovd".to_string()));
         assert_eq!(normalize_base("sovd"), Some("/sovd".to_string()));
+        assert_eq!(normalize_base("sovd/"), Some("/sovd".to_string()));
     }
 
     #[test]

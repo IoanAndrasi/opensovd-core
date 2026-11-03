@@ -1,7 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 Contributors to the Eclipse Foundation
 // SPDX-License-Identifier: Apache-2.0
 
+use std::collections::HashMap;
+
 use serde::{Deserialize, Serialize};
+
+use crate::JsonPointer;
 
 /// SOVD error codes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -51,7 +55,7 @@ pub struct GenericError {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub translation_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub parameters: Option<serde_json::Value>,
+    pub parameters: Option<HashMap<String, serde_json::Value>>,
 }
 
 impl GenericError {
@@ -75,5 +79,92 @@ impl GenericError {
             translation_id: None,
             parameters: None,
         }
+    }
+}
+
+/// Error of one element of a request or response.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "jsonschema", derive(schemars::JsonSchema))]
+pub struct DataError {
+    /// JSON Pointer to the erroneous element.
+    pub path: JsonPointer,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<GenericError>,
+}
+
+/// Body of an error response.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "jsonschema", derive(schemars::JsonSchema))]
+#[serde(untagged)]
+pub enum ErrorDetails {
+    /// An error of the request as a whole.
+    Generic(GenericError),
+    /// An error of one element of the request, such as a rejected data
+    /// write.
+    Data(DataError),
+}
+
+impl From<GenericError> for ErrorDetails {
+    fn from(error: GenericError) -> Self {
+        Self::Generic(error)
+    }
+}
+
+impl From<DataError> for ErrorDetails {
+    fn from(error: DataError) -> Self {
+        Self::Data(error)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+
+    #[test]
+    fn test_generic_error_parameters_accept_map() {
+        let err: GenericError = serde_json::from_str(
+            r#"{"error_code":"vendor-specific","vendor_code":"sensor-timeout","message":"Sensor did not respond","parameters":{"sensor":"brake-pressure","retries":3}}"#,
+        )
+        .unwrap();
+        let params = err.parameters.unwrap();
+        assert_eq!(params["sensor"], "brake-pressure");
+        assert_eq!(params["retries"], 3);
+    }
+
+    #[test]
+    fn test_generic_error_parameters_reject_non_map() {
+        let result = serde_json::from_str::<GenericError>(
+            r#"{"error_code":"sovd-server-failure","message":"Internal error","parameters":["brake-pressure"]}"#,
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn data_error_error_is_optional() {
+        let error: DataError = serde_json::from_value(json!({"path": "/data"})).unwrap();
+        assert!(error.error.is_none());
+        assert_eq!(
+            serde_json::to_value(&error).unwrap(),
+            json!({"path": "/data"})
+        );
+    }
+
+    #[test]
+    fn error_details_distinguishes_shapes() {
+        let generic: ErrorDetails =
+            serde_json::from_value(json!({"error_code": "incomplete-request", "message": "m"}))
+                .unwrap();
+        assert!(matches!(generic, ErrorDetails::Generic(_)));
+
+        let data: ErrorDetails = serde_json::from_value(json!({
+            "path": "/data",
+            "error": {"error_code": "invalid-signature", "message": "m"}
+        }))
+        .unwrap();
+        assert!(matches!(data, ErrorDetails::Data(_)));
+
+        assert!(serde_json::from_value::<ErrorDetails>(json!({"message": "m"})).is_err());
     }
 }

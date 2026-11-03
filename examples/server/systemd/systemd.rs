@@ -30,7 +30,7 @@ mod systemd {
             .ok_or("no socket from systemd, use: systemd-socket-activate -l 8080")?;
 
         // SAFETY: fd is valid and owned, provided by systemd socket activation
-        #[allow(unsafe_code)]
+        #[expect(unsafe_code)]
         let std_listener = unsafe { std::net::TcpListener::from_raw_fd(fd) };
         std_listener.set_nonblocking(true)?;
         let listener = TcpListener::from_std(std_listener)?;
@@ -40,11 +40,11 @@ mod systemd {
             .base_uri("http://127.0.0.1:0/sovd")?
             .listener(listener)
             .topology(create_mock_topology().await)
-            .layer(libcli::trace::trace_layer())
+            .layer(opensovd_extra::trace::server_layer())
             .build()?;
 
         sd_notify::notify(&[NotifyState::Ready])?;
-        tracing::info!(addr = %addr, "Server running");
+        tracing::info!(target: "systemd", addr = %addr, "Server running");
         server.serve().await?;
         Ok(())
     }

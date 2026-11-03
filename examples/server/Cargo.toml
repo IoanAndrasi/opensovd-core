@@ -9,6 +9,10 @@ license.workspace = true
 publish = false
 
 [[example]]
+name = "bulkdata"
+path = "bulkdata/bulkdata.rs"
+
+[[example]]
 name = "simple"
 path = "simple/simple.rs"
 
@@ -20,6 +24,9 @@ path = "systemd/systemd.rs"
 name = "auth"
 path = "auth/auth.rs"
 
+[[example]]
+name = "updates"
+path = "updates/updates.rs"
 
 [[example]]
 name = "mtls"
@@ -27,22 +34,29 @@ path = "mtls/mtls.rs"
 required-features = ["tls"]
 
 [features]
-tls = ["opensovd-server/tls", "dep:rustls"]
+tls = ["opensovd-server/tls", "opensovd-extra/tls"]
 
 [dependencies]
 async-trait = { workspace = true }
+aws-lc-rs = { workspace = true }
+bytes = { workspace = true }
+chrono = { workspace = true }
+futures = { workspace = true, features = ["std", "async-await"] }
 jsonwebtoken = { workspace = true }
 libcli = { workspace = true }
 opensovd-core = { workspace = true }
-opensovd-extra = { workspace = true, features = ["auth"] }
+opensovd-extra = { workspace = true, features = ["auth", "trace"] }
 opensovd-mocks = { workspace = true }
 opensovd-models = { workspace = true }
 opensovd-providers = { workspace = true }
-opensovd-server = { workspace = true }
-rustls = { workspace = true, optional = true }
+opensovd-server = { workspace = true, default-features = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true, features = ["std"] }
 sysinfo = { workspace = true }
-tokio = { workspace = true, features = ["net", "rt-multi-thread", "macros", "fs"] }
+tempfile = { workspace = true }
+tokio = { workspace = true, features = ["net", "rt-multi-thread", "macros", "fs", "io-util", "time"] }
 tracing = { workspace = true }
+uuid = { workspace = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 sd-notify = { workspace = true }

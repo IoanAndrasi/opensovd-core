@@ -1,17 +1,18 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 Contributors to the Eclipse Foundation
 // SPDX-License-Identifier: Apache-2.0
 
-#![cfg_attr(all(test, coverage_nightly), feature(coverage_attribute))]
-
+pub mod bulkdata;
 pub mod data;
 pub mod discovery;
 pub mod error;
+pub mod log;
 pub mod types;
+pub mod updates;
 pub mod version;
 
-pub use error::{ErrorCode, GenericError};
+pub use error::{DataError, ErrorCode, ErrorDetails, GenericError};
 use serde::{Deserialize, Serialize};
-pub use types::{JsonPointer, UriReference};
+pub use types::{DateTime, JsonPointer, UriReference};
 
 /// SOVD tag definition.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -27,18 +28,12 @@ pub struct Tag {
     pub translation_id: Option<String>,
 }
 
-/// Generic response wrapper with optional schema
-#[derive(Debug, Serialize, Deserialize)]
-pub struct Response<T> {
-    #[serde(flatten)]
-    pub data: T,
+/// A collection of items.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "jsonschema", derive(schemars::JsonSchema))]
+pub struct Collection<T> {
+    pub items: Vec<T>,
+    /// Schema of the response, sent for `include-schema=true`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub schema: Option<serde_json::Value>,
-}
-
-/// Generic response for collections with items
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[cfg_attr(feature = "jsonschema", derive(schemars::JsonSchema))]
-pub struct Items<T> {
-    pub items: Vec<T>,
 }

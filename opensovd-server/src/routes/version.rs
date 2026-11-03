@@ -3,20 +3,17 @@
 
 //! Version information endpoint.
 //!
-//! Provides routes for:
-//! - GET /version-info - Get SOVD server version and vendor information
+//! Provides a route outside the API version:
+//! - GET /version-info - Read the supported versions
 
-use axum::{Router, extract::State, http::request::Parts, response::Json, routing::get};
-use axum_extra::extract::{Query, WithRejection};
-use opensovd_models::Response;
+use axum::{Router, extract::State, http::request::Parts, routing::get};
 use opensovd_models::version::{SovdInfo, VersionInfo, VersionInfoQuery};
 use serde::Serialize;
 
-use super::AppState;
-use super::error::Error;
+use super::extract::{Json, Query};
 use crate::schema::JsonSchema;
 
-pub fn routes<V>() -> Router<AppState<V>>
+pub fn routes<V>() -> Router<Option<V>>
 where
     V: Serialize + Clone + Send + Sync + 'static,
     VersionInfo<V>: JsonSchema,
@@ -24,39 +21,34 @@ where
     Router::new().route("/version-info", get(version_info::<V>))
 }
 
-/// GET /version-info - Get SOVD server version information.
+/// GET /version-info - Read the supported versions.
 ///
 /// Returns the SOVD API version, base URI, and optional vendor-specific information.
 async fn version_info<V>(
-    State(state): State<AppState<V>>,
+    State(vendor_info): State<Option<V>>,
     parts: Parts,
-    WithRejection(Query(query), _): WithRejection<Query<VersionInfoQuery>, Error>,
-) -> Json<Response<VersionInfo<V>>>
+    Query(query): Query<VersionInfoQuery>,
+) -> Json<VersionInfo<V>>
 where
     V: Serialize + Clone + Send + Sync + 'static,
     VersionInfo<V>: JsonSchema,
 {
     let base_uri = super::versioned_uri(&parts);
 
-    Json(Response {
-        data: VersionInfo {
-            sovd_info: vec![SovdInfo {
-                version: super::SOVD_VERSION.into(),
-                base_uri: base_uri.into(),
-                vendor_info: state.vendor_info,
-            }],
-        },
+    Json(VersionInfo {
+        sovd_info: vec![SovdInfo {
+            version: super::SOVD_VERSION.into(),
+            base_uri: base_uri.into(),
+            vendor_info,
+        }],
         schema: query.include_schema.then(VersionInfo::<V>::schema),
     })
 }
 
 #[cfg(test)]
-#[cfg_attr(coverage_nightly, coverage(off))]
-#[allow(clippy::string_slice)]
 mod tests {
     use axum::{body::Body, http::Request};
     use http_body_util::BodyExt;
-    use opensovd_core::Topology;
     use opensovd_models::version::VendorInfo;
     use tower::ServiceExt;
 
@@ -64,11 +56,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_version_info() {
-        let state = AppState::<VendorInfo> {
-            vendor_info: None,
-            topology: Topology::default(),
-        };
-        let app = routes::<VendorInfo>().with_state(state);
+        let app = routes::<VendorInfo>().with_state(None);
 
         let request = Request::builder()
             .uri("/version-info")
@@ -88,12 +76,35 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_version_info_advertises_configured_base_uri() {
+        let app = routes::<VendorInfo>()
+            .with_state(None)
+            .layer(axum::Extension(crate::routes::BaseUri {
+                scheme: "https".to_string(),
+                path: "/api/sovd".to_string(),
+            }));
+
+        let request = Request::builder()
+            .uri("/version-info")
+            .header("host", "vehicle.example:8443")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert!(response.status().is_success());
+
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+        assert_eq!(
+            json["sovd_info"][0]["base_uri"],
+            "https://vehicle.example:8443/api/sovd/v1"
+        );
+    }
+
+    #[tokio::test]
     async fn test_version_info_with_schema() {
-        let state = AppState::<VendorInfo> {
-            vendor_info: None,
-            topology: Topology::default(),
-        };
-        let app = routes::<VendorInfo>().with_state(state);
+        let app = routes::<VendorInfo>().with_state(None);
 
         let request = Request::builder()
             .uri("/version-info?include-schema=true")
@@ -112,11 +123,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_version_info_invalid_query_param() {
-        let state = AppState::<VendorInfo> {
-            vendor_info: None,
-            topology: Topology::default(),
-        };
-        let app = routes::<VendorInfo>().with_state(state);
+        let app = routes::<VendorInfo>().with_state(None);
 
         let request = Request::builder()
             .uri("/version-info?include-schema=bad")
@@ -143,14 +150,11 @@ mod tests {
             build: u32,
         }
 
-        let state = AppState {
-            vendor_info: Some(CustomVendor {
-                product: "SOVD".into(),
-                build: 42,
-            }),
-            topology: Topology::default(),
-        };
-        let app = routes::<CustomVendor>().with_state(state);
+        let vendor_info = Some(CustomVendor {
+            product: "SOVD".into(),
+            build: 42,
+        });
+        let app = routes::<CustomVendor>().with_state(vendor_info);
 
         let request = Request::builder()
             .uri("/version-info?include-schema=true")
@@ -168,17 +172,11 @@ mod tests {
         assert_eq!(json["sovd_info"][0]["vendor_info"]["product"], "SOVD");
         assert_eq!(json["sovd_info"][0]["vendor_info"]["build"], 42);
 
-        // Verify schema structure (schemars 1.0 uses JSON Schema 2020-12)
         let schema = &json["schema"];
-        assert_eq!(
-            schema["$schema"],
-            "https://json-schema.org/draft/2020-12/schema"
-        );
-        assert_eq!(schema["title"], "VersionInfo");
 
-        // Verify CustomVendor is in $defs with correct properties (schemars 1.0 uses $defs)
-        let vendor_def = &schema["$defs"]["CustomVendor"];
-        assert_eq!(vendor_def["type"], "object");
+        // Verify CustomVendor is inlined with correct properties
+        let vendor_def = &schema["properties"]["sovd_info"]["items"]["properties"]["vendor_info"];
+        assert_eq!(vendor_def["type"], serde_json::json!(["object", "null"]));
         assert_eq!(vendor_def["properties"]["product"]["type"], "string");
         assert_eq!(vendor_def["properties"]["build"]["type"], "integer");
         assert_eq!(vendor_def["properties"]["build"]["format"], "uint32");

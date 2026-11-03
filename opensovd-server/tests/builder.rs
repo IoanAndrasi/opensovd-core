@@ -1,30 +1,56 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 Contributors to the Eclipse Foundation
 // SPDX-License-Identifier: Apache-2.0
 
-#![allow(clippy::indexing_slicing)]
+#![expect(clippy::indexing_slicing)]
 
 mod common;
 
 use http_body_util::BodyExt;
 use hyper::Request;
-use opensovd_core::{
-    Component, DiscoveryError, DiscoveryProvider, DiscoveryStream, EntityCollection, Topology,
-};
+use opensovd_core::{App, Component, Topology};
 use opensovd_server::Server;
-use tokio::time::Duration;
 
-#[tokio::test]
-async fn test_base_path_slash() {
-    let server = common::TestServer::builder().base_uri("/").build().await;
+// not a #[test] fn, so the test-only unwrap allowance does not apply here
+#[expect(clippy::unwrap_used)]
+async fn advertised_base_uri(server: &common::TestServer, path: &str) -> String {
     let client = common::client();
-
     let request = Request::builder()
-        .uri(server.url("/version-info"))
+        .uri(server.url(path))
         .body(http_body_util::Empty::<bytes::Bytes>::new())
         .unwrap();
 
     let response = client.request(request).await.unwrap();
     assert!(response.status().is_success());
+
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    json["sovd_info"][0]["base_uri"]
+        .as_str()
+        .unwrap()
+        .to_string()
+}
+
+#[tokio::test]
+async fn test_base_path_slash() {
+    let server = common::TestServer::builder().base_uri("/").build().await;
+
+    assert_eq!(
+        advertised_base_uri(&server, "/version-info").await,
+        format!("http://{}/v1", server.addr)
+    );
+}
+
+#[tokio::test]
+async fn test_base_path_with_trailing_slash() {
+    let server = common::TestServer::builder()
+        .base_uri("/sovd/")
+        .build()
+        .await;
+
+    assert_eq!(
+        advertised_base_uri(&server, "/sovd/version-info").await,
+        format!("http://{}/sovd/v1", server.addr)
+    );
 }
 
 #[tokio::test]
@@ -33,15 +59,44 @@ async fn test_base_path_with_slash() {
         .base_uri("/sovd")
         .build()
         .await;
-    let client = common::client();
 
+    assert_eq!(
+        advertised_base_uri(&server, "/sovd/version-info").await,
+        format!("http://{}/sovd/v1", server.addr)
+    );
+}
+
+#[tokio::test]
+async fn test_non_default_base_path_is_advertised() {
+    let server = common::TestServer::builder()
+        .base_uri("/api/sovd")
+        .topology(opensovd_mocks::create_mock_topology().await)
+        .build()
+        .await;
+
+    assert_eq!(
+        advertised_base_uri(&server, "/api/sovd/version-info").await,
+        format!("http://{}/api/sovd/v1", server.addr)
+    );
+
+    // hrefs share the advertised prefix, so the links resolve
+    let client = common::client();
     let request = Request::builder()
-        .uri(server.url("/sovd/version-info"))
+        .uri(server.url("/api/sovd/v1/components"))
         .body(http_body_util::Empty::<bytes::Bytes>::new())
         .unwrap();
 
     let response = client.request(request).await.unwrap();
     assert!(response.status().is_success());
+
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let href = json["items"][0]["href"].as_str().unwrap();
+
+    assert!(
+        href.starts_with(&format!("http://{}/api/sovd/v1/components/", server.addr)),
+        "unexpected href {href}"
+    );
 }
 
 #[tokio::test]
@@ -146,60 +201,160 @@ async fn test_list_areas() {
     assert_eq!(items.len(), 2);
 }
 
-struct MockDiscoveryProvider {
-    component: Component,
-}
+#[tokio::test]
+async fn test_unknown_path_returns_generic_error() {
+    let topology = opensovd_mocks::create_mock_topology().await;
+    let client = common::client();
 
-#[async_trait::async_trait]
-impl DiscoveryProvider for MockDiscoveryProvider {
-    async fn discover(&self) -> Result<DiscoveryStream, DiscoveryError> {
-        let entities = EntityCollection {
-            components: vec![Component::new(self.component.id(), self.component.name())],
-            ..Default::default()
-        };
-        Ok(Box::pin(futures::stream::once(async {
-            Ok((vec![], entities))
-        })))
+    for (base, path) in [
+        ("/sovd", "/sovd/"),
+        ("/sovd", "/sovd/v1/unknown"),
+        ("/sovd", "/sovd/v1/components/ecu/unknown"),
+        ("/sovd", "/sovd/v1/components/ecu/belongs-to"),
+        ("/sovd", "/sovd/v1/apps/engine_control/belongs-to"),
+        ("/sovd", "/sovd/v1/apps/engine_control/is-located-on"),
+        ("/", "/v1/unknown"),
+    ] {
+        let server = common::TestServer::builder()
+            .base_uri(base)
+            .topology(topology.clone())
+            .build()
+            .await;
+        let request = Request::builder()
+            .uri(server.url(path))
+            .body(http_body_util::Empty::<bytes::Bytes>::new())
+            .unwrap();
+
+        let response = client.request(request).await.unwrap();
+        assert_eq!(response.status(), 404, "{path}");
+        assert_eq!(
+            response.headers()["content-type"],
+            "application/json",
+            "{path}"
+        );
+
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["error_code"], "vendor-specific", "{path}");
+        assert_eq!(json["vendor_code"], "resource-not-found", "{path}");
     }
 }
 
 #[tokio::test]
-async fn test_discovery_adds_component() {
-    let provider = MockDiscoveryProvider {
-        component: Component::new("discovered-ecu", "Discovered ECU"),
-    };
-
+async fn test_missing_data_provider_returns_resource_not_found() {
+    let topology = Topology::new();
+    {
+        let mut topo = topology.write().await;
+        topo.add_component(Component::new("Display", "Display"));
+        topo.add_app(App::new("Radio", "Radio"));
+    }
     let server = common::TestServer::builder()
-        .discovery(provider)
+        .topology(topology)
         .build()
         .await;
-    let client = common::client();
+    let client = hyper_util::client::legacy::Client::builder(hyper_util::rt::TokioExecutor::new())
+        .build_http::<http_body_util::Full<bytes::Bytes>>();
 
-    // Give the discovery task time to process the event.
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    for entity in ["components/Display", "apps/Radio"] {
+        for (method, resource, body) in [
+            ("GET", "data-categories", ""),
+            ("GET", "data-groups", ""),
+            ("GET", "data", ""),
+            ("GET", "data/volume", ""),
+            ("PUT", "data/volume", r#"{"data": 1}"#),
+        ] {
+            let path = format!("/sovd/v1/{entity}/{resource}");
+            let request = Request::builder()
+                .method(method)
+                .uri(server.url(&path))
+                .header("content-type", "application/json")
+                .body(http_body_util::Full::new(bytes::Bytes::from_static(
+                    body.as_bytes(),
+                )))
+                .unwrap();
 
-    let request = Request::builder()
-        .uri(server.url("/sovd/v1/components/discovered-ecu"))
-        .body(http_body_util::Empty::<bytes::Bytes>::new())
+            let response = client.request(request).await.unwrap();
+            assert_eq!(response.status(), 404, "{method} {path}");
+
+            let body = response.into_body().collect().await.unwrap().to_bytes();
+            let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+            assert_eq!(json["error_code"], "vendor-specific", "{method} {path}");
+            assert_eq!(json["vendor_code"], "resource-not-found", "{method} {path}");
+            assert_eq!(
+                json["message"],
+                format!("Resource not found: {entity}/{resource}"),
+                "{method} {path}"
+            );
+        }
+    }
+}
+
+#[tokio::test]
+#[should_panic(expected = "Insertion failed due to conflict")]
+async fn test_service_on_an_api_route_panics() {
+    let svc = tower::service_fn(|_req: Request<opensovd_server::Body>| async {
+        Ok::<_, std::convert::Infallible>(http::Response::new(
+            http_body_util::Empty::<bytes::Bytes>::new(),
+        ))
+    });
+    let server = Server::builder()
+        .listener(tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap())
+        .base_uri("/sovd")
+        .unwrap()
+        .service("/sovd/v1/components", svc)
+        .shutdown(std::future::ready(()))
+        .build()
+        .unwrap();
+    let _ = server.serve().await;
+}
+
+#[tokio::test]
+async fn test_service_below_the_api() {
+    let svc = tower::service_fn(|_req: Request<opensovd_server::Body>| async {
+        Ok::<_, std::convert::Infallible>(http::Response::new(http_body_util::Full::new(
+            bytes::Bytes::from("from service"),
+        )))
+    });
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+
+    let server = Server::builder()
+        .listener(listener)
+        .base_uri("/sovd")
+        .unwrap()
+        .service("/sovd/v1/ui", svc)
+        .shutdown(async {
+            shutdown_rx.await.ok();
+        })
+        .build()
         .unwrap();
 
-    let response = client.request(request).await.unwrap();
-    assert!(
-        response.status().is_success(),
-        "Expected discovered component to be present, got {}",
-        response.status()
-    );
+    tokio::spawn(async move { server.serve().await.unwrap() });
 
-    let body = response.into_body().collect().await.unwrap().to_bytes();
-    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let client = common::client();
+    for (path, from_service) in [
+        ("/sovd/v1/ui", true),
+        ("/sovd/v1/ui/index.html", true),
+        ("/sovd/v1/components", false),
+    ] {
+        let request = Request::builder()
+            .uri(format!("http://{addr}{path}"))
+            .body(http_body_util::Empty::<bytes::Bytes>::new())
+            .unwrap();
+        let response = client.request(request).await.unwrap();
+        assert!(response.status().is_success(), "{path}");
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        assert_eq!(&body[..] == b"from service", from_service, "{path}");
+    }
 
-    assert_eq!(json["id"], "discovered-ecu");
-    assert_eq!(json["name"], "Discovered ECU");
+    let _ = shutdown_tx.send(());
 }
 
 #[tokio::test]
 async fn test_service() {
-    let svc = tower::service_fn(|_req: http::Request<opensovd_server::Body>| async {
+    let svc = tower::service_fn(|_req: Request<opensovd_server::Body>| async {
         Ok::<_, std::convert::Infallible>(http::Response::new(http_body_util::Full::new(
             bytes::Bytes::from("from service"),
         )))

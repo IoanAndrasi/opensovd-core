@@ -21,36 +21,41 @@ The repository includes a [Dev Container](.devcontainer/devcontainer.json) confi
 1. Install the [Dev Containers](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-containers) extension in VS Code.
 2. Open the project and select **Dev Containers: Reopen in Container**.
 
-The container includes:
+The container installs the tools pinned in [`mise.toml`](../mise.toml), the Rust
+toolchain from `rust-toolchain.toml` and the git hooks, pre-configures VS Code extensions
+(rust-analyzer, ruff, etc.) and forwards port 7690 for the gateway.
+The tools live in the `opensovd-core-mise` volume, so rebuilds reuse them, and the
+Python environment in `/home/vscode/.venv`, apart from the checkout's `.venv`. It has
+no Docker, so run the published-image workflow in [Testing](testing.md) from the host.
 
-- Python, Rust toolchain, and uv (versions per [devcontainer.json](../.devcontainer/devcontainer.json))
-- Pre-configured VS Code extensions (rust-analyzer, ruff, gitlens, errorlens, etc.)
-- Docker-in-Docker and GitHub CLI
-- Port 7690 forwarded for the gateway
+## Option 2: Local
 
-## Option 2: Nix flake (local)
-
-Use the [Nix flake](../flake.nix) for a reproducible local environment. It requires
-[Nix](https://nixos.org/download/) with the `nix-command` and `flakes`
-[experimental features](https://nixos.org/manual/nix/stable/command-ref/conf-file#conf-experimental-features) enabled.
-
-```bash
-nix develop
-```
-
-The Rust toolchain is pinned via `rust-toolchain.toml` (the single source of truth shared
-with `cargo`/`rustup`); changing it also requires updating the toolchain `sha256` in
-[`flake.nix`](../flake.nix); the comment there explains how. Python, uv, and the
-supporting CLI tools are provided by the flake. Run `uv sync` after entering the shell
-(and after `uv.lock` changes) to set up the Python integration-test environment.
-
-Or with [direnv](https://direnv.net/) (auto-activates when entering the directory).
-Install [nix-direnv](https://github.com/nix-community/nix-direnv) too, since it caches the
-environment between entries and protects it from garbage collection:
+Install [mise](https://mise.jdx.dev/getting-started.html) with its shell activation. It
+installs the Rust toolchain from `rust-toolchain.toml` and every other tool from
+[`mise.toml`](../mise.toml):
 
 ```bash
-direnv allow
+mise trust
+mise install
+uv sync
+prek install
 ```
 
-> [!NOTE]
-> If neither option applies, install [Rust](https://rustup.rs/) (auto-configured via `rust-toolchain.toml`) and optionally [uv](https://docs.astral.sh/uv/) for running integration tests.
+## Option 3: Bazel bootstrap
+
+The repository also includes a Bazel entrypoint backed by `rules_rust` and `crate_universe`. This keeps the Rust workspace native in Bazel instead of shelling out to Cargo for package builds.
+
+Use Bazel 8.6.0 directly or via Bazelisk so the workspace follows the pinned version in `.bazelversion`.
+
+```bash
+# Build the gateway through Bazel
+bazel build //:opensovd-gateway
+```
+
+The Bazel integration builds the gateway and its transitive internal dependencies. Cargo remains the authoritative test workflow.
+
+When dependency versions change, refresh the generated crate-universe lock metadata with:
+
+```bash
+CARGO_BAZEL_REPIN=1 bazel sync --only=crate_index
+```

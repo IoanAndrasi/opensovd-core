@@ -5,9 +5,12 @@
 
 use std::collections::HashMap;
 
+use http_body::Body;
+use http_body_util::BodyExt;
+use hyper::{Method, Request};
 use hyper_util::client::legacy::Client;
 use hyper_util::rt::TokioExecutor;
-use opensovd_core::{Component, DiscoveryProvider, Topology};
+use opensovd_core::{Component, Topology};
 use opensovd_server::Server;
 use tokio::net::TcpListener;
 use tokio::sync::oneshot;
@@ -15,7 +18,7 @@ use tokio::sync::oneshot;
 pub struct TestEntity;
 
 impl TestEntity {
-    #[allow(clippy::new_ret_no_self)]
+    #[expect(clippy::new_ret_no_self)]
     pub fn new(id: &str, name: &str) -> Component {
         Component::new(id, name)
     }
@@ -25,8 +28,7 @@ impl TestEntity {
     }
 }
 
-pub type HttpClient =
-    Client<hyper_util::client::legacy::connect::HttpConnector, http_body_util::Empty<bytes::Bytes>>;
+pub type HttpClient<B> = Client<hyper_util::client::legacy::connect::HttpConnector, B>;
 
 pub struct TestServer {
     pub addr: std::net::SocketAddr,
@@ -59,7 +61,6 @@ impl Drop for TestServer {
 pub struct TestServerBuilder {
     base: Option<String>,
     topology: Option<Topology>,
-    discovery_providers: Vec<Box<dyn DiscoveryProvider>>,
 }
 
 impl TestServerBuilder {
@@ -70,11 +71,6 @@ impl TestServerBuilder {
 
     pub fn topology(mut self, topology: Topology) -> Self {
         self.topology = Some(topology);
-        self
-    }
-
-    pub fn discovery(mut self, provider: impl DiscoveryProvider + 'static) -> Self {
-        self.discovery_providers.push(Box::new(provider));
         self
     }
 
@@ -97,10 +93,6 @@ impl TestServerBuilder {
             builder = builder.topology(topology);
         }
 
-        for provider in self.discovery_providers {
-            builder = builder.discovery(provider);
-        }
-
         let server = builder.build().unwrap();
         tokio::spawn(async move {
             server.serve().await.unwrap();
@@ -113,6 +105,31 @@ impl TestServerBuilder {
     }
 }
 
-pub fn client() -> HttpClient {
-    Client::builder(TokioExecutor::new()).build_http()
+pub fn client<B>() -> HttpClient<B>
+where
+    B: Body + Send,
+    B::Data: Send,
+{
+    Client::builder(TokioExecutor::new()).build_http::<B>()
+}
+
+/// A test server over the mock topology.
+pub async fn mock_server() -> TestServer {
+    TestServer::builder()
+        .topology(opensovd_mocks::create_mock_topology().await)
+        .build()
+        .await
+}
+
+/// Sends a request without a body, and returns the status and the JSON body.
+pub async fn send(server: &TestServer, method: Method, path: &str) -> (u16, serde_json::Value) {
+    let request = Request::builder()
+        .method(method)
+        .uri(server.url(path))
+        .body(http_body_util::Empty::<bytes::Bytes>::new())
+        .unwrap();
+    let response = client().request(request).await.unwrap();
+    let status = response.status().as_u16();
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    (status, serde_json::from_slice(&body).unwrap())
 }

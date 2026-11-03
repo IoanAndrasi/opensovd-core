@@ -1,36 +1,37 @@
-
 {
   "name": "OpenSOVD Core",
-  "image": "mcr.microsoft.com/devcontainers/rust:1-1-bookworm",
-  "overrideCommand": false,
+  "build": {
+    "dockerfile": "Dockerfile"
+  },
   "remoteUser": "vscode",
-  "features": {
-    "ghcr.io/devcontainers/features/docker-in-docker": {},
-    "ghcr.io/devcontainers/features/github-cli": {},
-    "ghcr.io/devcontainers/features/python:1": {
-      "version": "3.13",
-      "toolsToInstall": "uv"
-    }
+  "mounts": [
+    "source=opensovd-core-mise,target=/mnt/mise-data,type=volume"
+  ],
+  "containerEnv": {
+    "MISE_DATA_DIR": "/mnt/mise-data",
+    "MISE_RUSTUP_HOME": "/mnt/mise-data/rustup",
+    "MISE_CARGO_HOME": "/mnt/mise-data/cargo",
+    "UV_PROJECT_ENVIRONMENT": "/home/vscode/.venv"
+  },
+  "remoteEnv": {
+    "PATH": "/mnt/mise-data/shims:${containerEnv:PATH}"
   },
   "customizations": {
     "vscode": {
       "extensions": [
-        "mkhl.direnv",
+        "hverlin.mise-vscode",
         "rust-lang.rust-analyzer",
         "tamasfe.even-better-toml",
         "redhat.vscode-yaml",
-        "usernamehw.errorlens",
-        "eamodio.gitlens",
         "ms-python.python",
         "charliermarsh.ruff",
-        "fill-labs.dependi",
-        "vadimcn.vscode-lldb"
+        "fill-labs.dependi"
       ],
       "settings": {
         "editor.formatOnSave": true,
+        "python.defaultInterpreterPath": "/home/vscode/.venv/bin/python",
         "rust-analyzer.check.command": "clippy",
         "rust-analyzer.cargo.allFeatures": true,
-        "terminal.integrated.defaultProfile.linux": "fish",
         "files.associations": {
           ".clippy.toml": "toml",
           "*.toml.j2": "toml"
@@ -39,5 +40,5 @@
     }
   },
   "forwardPorts": [7690],
-  "postCreateCommand": "uv sync"
+  "onCreateCommand": "bash .devcontainer/on-create.sh"
 }
