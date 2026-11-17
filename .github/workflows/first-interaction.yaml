@@ -8,8 +8,12 @@ on:
     types: [opened]
   # pull_request_target gives a read-write token for fork PRs (plain
   # pull_request is read-only there, so commenting fails with 403).
-  pull_request_target:
+  pull_request_target: # zizmor: ignore[dangerous-triggers]
     types: [opened]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.event.issue.number }}
+  cancel-in-progress: true
 
 jobs:
   first-interaction:
@@ -18,8 +22,8 @@ jobs:
       issues: write
       pull-requests: write
     steps:
-      - uses: actions/first-interaction@v3
-        if: contains(github.actor, '[bot]') == false
+      - uses: actions/first-interaction@1c4688942c71f71d4f5502a26ea67c331730fa4d # v3.1.0
+        if: (github.event.pull_request.user.type || github.event.issue.user.type) != 'Bot'
         with:
           issue_message: |
             Hi @${{ github.event.issue.user.login }},
